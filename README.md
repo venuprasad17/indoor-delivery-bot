@@ -1,11 +1,29 @@
-<div align="center">
+# Robot Operator - Native Mobile Operations App
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Internal operations mobile application for the Autonomous Indoor Delivery Robot backend (FastAPI + JWT + WebSocket).
 
-  <h1>Built with AI Studio</h2>
+## Operations Design Principles
+- **No Demoware Aesthetic**: Strictly light-themed, utilitarian industrial operations UI.
+- **Color Semantics**: 
+  - Green = Online / Safe / Tracking / Active
+  - Amber = Paused / Slow / Relocating / Manual
+  - Red = Stop / Lost / Emergency Stop / Fault
+  - Grey = Offline / Idle / Finished
+- **Always Reachable E-STOP**: Pinned red emergency stop in the persistent header strip that fires immediately with zero confirmation prompt.
+- **Hardware Telemetry & Mapping**: Real-time 2D pose trail canvas plotting with grid crosshairs and heading direction indicator.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Configuration & Network Setup
+1. **Server Settings**:
+   - First launch prompts for server address (default: `http://10.0.2.2:8000` for Android emulator or your computer's LAN IP e.g. `http://192.168.1.x:8000`).
+   - "Test connection" verifies `GET /health` (`{"status":"ok"}`).
+   - Automatically derives WebSocket URL: `http://` ➔ `ws://`, `https://` ➔ `wss://`.
+   - Cleartext traffic is enabled in Android Manifest for local operational networks.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+2. **Authentication**:
+   - Admin-only access. Non-admin roles receive an explicit notice and cannot access robot controls.
+   - JWT access tokens stored securely in memory with automated HTTP-only cookie refresh interception on 401.
 
-</div>
+3. **Running the App**:
+   - Built with Android Studio / Gradle on modern Android (API 24 - 36).
+   - Tap "Test connection" on the Server Settings screen to ensure connectivity to the FastAPI backend.
+   - Sign in using administrator credentials to view live telemetry, manage mapping sessions, configure destination waypoints, and dispatch delivery missions.

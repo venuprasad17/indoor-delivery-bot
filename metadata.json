@@ -1,0 +1,6 @@
+{
+  "name": "Robot Operator",
+  "description": "Internal operations client for autonomous indoor delivery robots",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
