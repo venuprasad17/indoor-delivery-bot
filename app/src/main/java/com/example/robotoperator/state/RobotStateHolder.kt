@@ -15,20 +15,15 @@ class RobotStateHolder {
     private val _currentPose = MutableStateFlow(Pose())
     val currentPose: StateFlow<Pose> = _currentPose.asStateFlow()
 
+    // Trail since screen opened - capped to 500 points for memory safety
     private val _poseTrail = MutableStateFlow<List<Pose>>(emptyList())
     val poseTrail: StateFlow<List<Pose>> = _poseTrail.asStateFlow()
 
-    private val _isWsConnected = MutableStateFlow(false)
-    val isWsConnected: StateFlow<Boolean> = _isWsConnected.asStateFlow()
+    private val _isLiveConnected = MutableStateFlow(false)
+    val isLiveConnected: StateFlow<Boolean> = _isLiveConnected.asStateFlow()
 
-    private val _connectionStatusText = MutableStateFlow("Disconnected")
-    val connectionStatusText: StateFlow<String> = _connectionStatusText.asStateFlow()
-
-    private val _activeSessionId = MutableStateFlow<String?>(null)
-    val activeSessionId: StateFlow<String?> = _activeSessionId.asStateFlow()
-
-    private val _activeDeliveryId = MutableStateFlow<String?>(null)
-    val activeDeliveryId: StateFlow<String?> = _activeDeliveryId.asStateFlow()
+    private val _emergencyStopError = MutableStateFlow<String?>(null)
+    val emergencyStopError: StateFlow<String?> = _emergencyStopError.asStateFlow()
 
     private val _needsModeReselection = MutableStateFlow(false)
     val needsModeReselection: StateFlow<Boolean> = _needsModeReselection.asStateFlow()
@@ -37,15 +32,19 @@ class RobotStateHolder {
         _robotStatus.value = status
     }
 
-    fun updateMode(newMode: String) {
-        _robotStatus.update { it.copy(control_mode = newMode) }
+    fun updateControlMode(mode: String) {
+        _robotStatus.update { it.copy(control_mode = mode) }
     }
 
-    fun updateSafetyState(newSafetyState: String) {
-        _robotStatus.update { it.copy(safety_state = newSafetyState) }
+    fun updateSafetyState(safetyState: String) {
+        _robotStatus.update { it.copy(safety_state = safetyState) }
     }
 
-    fun updateOnlineStatus(isOnline: Boolean, lastSeen: String? = null) {
+    fun setNeedsModeReselection(needed: Boolean) {
+        _needsModeReselection.value = needed
+    }
+
+    fun updateOnline(isOnline: Boolean, lastSeen: String? = null) {
         _robotStatus.update {
             it.copy(
                 status = if (isOnline) "ONLINE" else "OFFLINE",
@@ -56,10 +55,9 @@ class RobotStateHolder {
 
     fun updatePose(pose: Pose) {
         _currentPose.value = pose
-        _poseTrail.update { current ->
-            val updated = current + pose
-            // Keep recent 300 points for smooth performance
-            if (updated.size > 300) updated.takeLast(300) else updated
+        _poseTrail.update { trail ->
+            val updated = trail + pose
+            if (updated.size > 500) updated.takeLast(500) else updated
         }
     }
 
@@ -67,20 +65,11 @@ class RobotStateHolder {
         _poseTrail.value = emptyList()
     }
 
-    fun setWsConnected(connected: Boolean, statusText: String) {
-        _isWsConnected.value = connected
-        _connectionStatusText.value = statusText
+    fun setLiveConnected(connected: Boolean) {
+        _isLiveConnected.value = connected
     }
 
-    fun setActiveSessionId(sessionId: String?) {
-        _activeSessionId.value = sessionId
-    }
-
-    fun setActiveDeliveryId(deliveryId: String?) {
-        _activeDeliveryId.value = deliveryId
-    }
-
-    fun setNeedsModeReselection(needed: Boolean) {
-        _needsModeReselection.value = needed
+    fun setEmergencyStopError(message: String?) {
+        _emergencyStopError.value = message
     }
 }

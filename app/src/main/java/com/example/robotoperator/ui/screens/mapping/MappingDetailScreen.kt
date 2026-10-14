@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -21,86 +22,56 @@ import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
 import com.example.robotoperator.data.model.FinishSessionRequest
 import com.example.robotoperator.data.model.MappingSession
-import com.example.robotoperator.data.model.Pose
 import com.example.robotoperator.state.RobotStateHolder
-import com.example.robotoperator.ui.components.*
+import com.example.robotoperator.ui.components.KeyValRow
+import com.example.robotoperator.ui.components.PosePlotCanvas
+import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MappingDetailScreen(
     sessionId: String,
     apiClient: ApiClient,
-    robotStore: RobotStateHolder,
-    onBack: () -> Unit
+    stateHolder: RobotStateHolder,
+    onNavigateBack: () -> Unit
 ) {
     var session by remember { mutableStateOf<MappingSession?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    var isActionRunning by remember { mutableStateOf(false) }
-    var inlineError by remember { mutableStateOf<String?>(null) }
+    var actionError by remember { mutableStateOf<String?>(null) }
+    var isExecutingAction by remember { mutableStateOf(false) }
+
     var showFinishDialog by remember { mutableStateOf(false) }
     var mapDataRefInput by remember { mutableStateOf("") }
-    var secondsSinceUpdate by remember { mutableIntStateOf(0) }
-    var localElapsedMs by remember { mutableLongStateOf(0L) }
 
-    // Pose trail accumulated locally while this screen is open
-    var localPoseTrail by remember { mutableStateOf<List<Pose>>(emptyList()) }
-
+    val currentPose by stateHolder.currentPose.collectAsState()
+    val poseTrail by stateHolder.poseTrail.collectAsState()
     val scope = rememberCoroutineScope()
 
-    // Load initial session data
-    val fetchSession: suspend () -> Unit = {
+    suspend fun fetchSession() {
         try {
-            val service = apiClient.getService()
-            val data = withContext(Dispatchers.IO) {
-                service.getMappingSession(sessionId)
-            }
-            session = data
-            localElapsedMs = data.elapsed_ms
-            secondsSinceUpdate = 0
-            inlineError = null
-
-            // Accumulate pose trail
-            data.last_pose_json?.let { p ->
-                if (localPoseTrail.isEmpty() || localPoseTrail.last() != p) {
-                    localPoseTrail = localPoseTrail + p
-                }
-            }
-        } catch (e: Exception) {
-            val err = ApiErrorParser.parse(e)
-            inlineError = err.message
+            val s = apiClient.getService().getMappingSession(sessionId)
+            session = s
+        } catch (t: Throwable) {
+            val parsed = ApiErrorParser.parse(t)
+            actionError = parsed.message
         } finally {
             isLoading = false
         }
     }
 
+    // Polling every 2s while mapping session is active (MAPPING or PAUSED), or single initial fetch
     LaunchedEffect(sessionId) {
-        fetchSession()
-    }
-
-    // 1-second ticker for local elapsed time and "Updated Ns ago"
-    LaunchedEffect(session?.status) {
         while (isActive) {
-            delay(1000L)
-            secondsSinceUpdate += 1
-            if (session?.status == "MAPPING") {
-                localElapsedMs += 1000L
-            }
-        }
-    }
-
-    // 2-second poller while MAPPING or PAUSED; stops when FINISHED
-    LaunchedEffect(session?.status) {
-        val st = session?.status
-        if (st == "MAPPING" || st == "PAUSED") {
-            while (isActive) {
-                delay(2000L)
-                fetchSession()
+            fetchSession()
+            val currentStatus = session?.status?.uppercase()
+            if (currentStatus == "MAPPING" || currentStatus == "PAUSED" || session == null) {
+                delay(2000)
+            } else {
+                delay(5000)
             }
         }
     }
@@ -109,45 +80,32 @@ fun MappingDetailScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "Session ${session?.shortId() ?: sessionId.take(8)}",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            fontFamily = FontFamily.Monospace,
-                            color = Slate900
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        session?.let {
-                            StatusBadge(
-                                text = it.status,
-                                type = getStatusBadgeType(it.status),
-                                testTag = "detail_status_badge"
-                            )
-                        }
-                    }
+                    Text(
+                        text = "Session ${sessionId.take(8)}",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Slate900
+                    )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.testTag("detail_back_button")) {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.testTag("back_button")
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = Slate700
+                            tint = Slate800
                         )
                     }
                 },
-                actions = {
-                    Text(
-                        text = "Updated ${secondsSinceUpdate}s ago",
-                        fontSize = 11.sp,
-                        color = Slate500,
-                        modifier = Modifier.padding(end = 16.dp)
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PureWhite)
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = PureWhite,
+                    titleContentColor = Slate900
+                )
             )
         },
-        containerColor = Slate50
+        containerColor = SurfaceCanvas
     ) { innerPadding ->
         if (isLoading && session == null) {
             Box(
@@ -156,10 +114,10 @@ fun MappingDetailScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    strokeWidth = 2.dp,
-                    color = PrimaryBlue
+                Text(
+                    text = "Loading session details...",
+                    fontSize = 14.sp,
+                    color = Slate500
                 )
             }
         } else if (session == null) {
@@ -170,14 +128,21 @@ fun MappingDetailScreen(
                     .padding(24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = inlineError ?: "Session not found",
-                    color = StatusRedText,
-                    fontSize = 14.sp
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = actionError ?: "Session not found",
+                        fontSize = 14.sp,
+                        color = StatusRed
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(onClick = { scope.launch { fetchSession() } }) {
+                        Text("Retry")
+                    }
+                }
             }
         } else {
-            val current = session!!
+            val currentSession = session!!
+            val status = currentSession.status.uppercase()
 
             Column(
                 modifier = Modifier
@@ -187,315 +152,275 @@ fun MappingDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Inline Error Display
-                if (!inlineError.isNullOrEmpty()) {
-                    Text(
-                        text = inlineError!!,
-                        color = StatusRedText,
-                        fontSize = 13.sp,
+                if (!actionError.isNullOrBlank()) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(StatusRedBg, shape = RoundedCornerShape(4.dp))
-                            .border(1.dp, StatusRedBorder, shape = RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(StatusRedBg)
+                            .border(1.dp, StatusRedBorder, RoundedCornerShape(4.dp))
                             .padding(10.dp)
-                            .testTag("session_error_banner")
-                    )
-                }
-
-                // Action Buttons Bar (strictly enabled by status)
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = PureWhite),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "Session Controls",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Slate700
+                            text = actionError!!,
+                            color = StatusRed,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace
                         )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // IDLE -> Start button
-                            if (current.status == "IDLE") {
-                                Button(
-                                    onClick = {
-                                        isActionRunning = true
-                                        inlineError = null
-                                        scope.launch {
-                                            try {
-                                                val s = apiClient.getService()
-                                                val res = withContext(Dispatchers.IO) {
-                                                    s.startMappingSession(sessionId)
-                                                }
-                                                session = res
-                                            } catch (e: Exception) {
-                                                inlineError = ApiErrorParser.parse(e).message
-                                            } finally {
-                                                isActionRunning = false
-                                            }
-                                        }
-                                    },
-                                    enabled = !isActionRunning,
-                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("action_start_session")
-                                ) {
-                                    Text("Start mapping")
-                                }
-                            }
-
-                            // MAPPING -> Pause & Finish
-                            if (current.status == "MAPPING") {
-                                Button(
-                                    onClick = {
-                                        isActionRunning = true
-                                        inlineError = null
-                                        scope.launch {
-                                            try {
-                                                val s = apiClient.getService()
-                                                val res = withContext(Dispatchers.IO) {
-                                                    s.pauseMappingSession(sessionId)
-                                                }
-                                                session = res
-                                            } catch (e: Exception) {
-                                                inlineError = ApiErrorParser.parse(e).message
-                                            } finally {
-                                                isActionRunning = false
-                                            }
-                                        }
-                                    },
-                                    enabled = !isActionRunning,
-                                    colors = ButtonDefaults.buttonColors(containerColor = Slate700),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("action_pause_session")
-                                ) {
-                                    Text("Pause")
-                                }
-
-                                Button(
-                                    onClick = { showFinishDialog = true },
-                                    enabled = !isActionRunning,
-                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("action_finish_session")
-                                ) {
-                                    Text("Finish")
-                                }
-                            }
-
-                            // PAUSED -> Resume & Finish
-                            if (current.status == "PAUSED") {
-                                Button(
-                                    onClick = {
-                                        isActionRunning = true
-                                        inlineError = null
-                                        scope.launch {
-                                            try {
-                                                val s = apiClient.getService()
-                                                val res = withContext(Dispatchers.IO) {
-                                                    s.resumeMappingSession(sessionId)
-                                                }
-                                                session = res
-                                            } catch (e: Exception) {
-                                                inlineError = ApiErrorParser.parse(e).message
-                                            } finally {
-                                                isActionRunning = false
-                                            }
-                                        }
-                                    },
-                                    enabled = !isActionRunning,
-                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("action_resume_session")
-                                ) {
-                                    Text("Resume")
-                                }
-
-                                Button(
-                                    onClick = { showFinishDialog = true },
-                                    enabled = !isActionRunning,
-                                    colors = ButtonDefaults.buttonColors(containerColor = Slate700),
-                                    shape = RoundedCornerShape(4.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("action_finish_session")
-                                ) {
-                                    Text("Finish")
-                                }
-                            }
-
-                            // FINISHED -> no actions
-                            if (current.status == "FINISHED") {
-                                Text(
-                                    text = "This mapping session is finished and saved.",
-                                    fontSize = 13.sp,
-                                    color = Slate500,
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                )
-                            }
-                        }
                     }
                 }
 
-                // Metrics List
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = PureWhite),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Slate200),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Telemetry & Metrics",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Slate900,
-                            modifier = Modifier.padding(16.dp, 12.dp)
-                        )
-                        HorizontalDivider(color = Slate200, thickness = 1.dp)
-
-                        KeyValRow(
-                            label = "Session ID",
-                            value = current.id,
-                            isMonospace = true,
-                            testTag = "detail_session_id"
-                        )
-                        KeyValRow(
-                            label = "Elapsed",
-                            value = formatElapsed(localElapsedMs),
-                            isMonospace = true,
-                            testTag = "detail_elapsed"
-                        )
-                        KeyValRow(
-                            label = "Pose updates",
-                            value = "${current.pose_update_count}",
-                            testTag = "detail_pose_count"
-                        )
-                        KeyValRow(
-                            label = "Last known pose",
-                            value = current.last_pose_json?.let {
-                                "(${it.formattedX()}, ${it.formattedY()}, ${it.formattedTheta()} rad)"
-                            } ?: "None",
-                            isMonospace = true,
-                            testTag = "detail_last_pose"
-                        )
-                        KeyValRow(
-                            label = "SLAM status",
-                            value = current.slam_status ?: "None",
-                            trailingBadge = current.slam_status?.let {
-                                { StatusBadge(text = it, type = getStatusBadgeType(it)) }
-                            }
-                        )
-                        KeyValRow(label = "Started at", value = current.started_at ?: "Not started")
-                        KeyValRow(label = "Paused at", value = current.paused_at ?: "None")
-                        KeyValRow(label = "Finished at", value = current.finished_at ?: "None")
-                        KeyValRow(label = "Map reference", value = current.map_data_ref ?: "None")
-                    }
-                }
-
-                // Pose Trail Canvas
-                val activePose = current.last_pose_json ?: Pose()
-                PosePlotCanvas(
-                    currentPose = activePose,
-                    poseTrail = localPoseTrail,
-                    heightDp = 260
-                )
-            }
-        }
-    }
-
-    // Finish Confirmation Dialog with optional map_data_ref
-    if (showFinishDialog) {
-        AlertDialog(
-            onDismissRequest = { showFinishDialog = false },
-            title = {
-                Text(
-                    text = "Finish mapping session?",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Slate900
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Completing this session will freeze SLAM landmarks and finalize the map data.",
-                        fontSize = 13.sp,
-                        color = Slate600
+                if (status == "MAPPING" || status == "PAUSED") {
+                    PosePlotCanvas(
+                        currentPose = currentPose,
+                        poseTrail = poseTrail,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = mapDataRefInput,
-                        onValueChange = { mapDataRefInput = it },
-                        label = { Text("Map reference (optional)") },
-                        placeholder = { Text("e.g. floor_2_grid") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(4.dp),
+                }
+
+                if (status == "IDLE" || status == "MAPPING" || status == "PAUSED") {
+                    Card(
+                        shape = RoundedCornerShape(6.dp),
+                        colors = CardDefaults.cardColors(containerColor = PureWhite),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("map_data_ref_input")
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showFinishDialog = false
-                        isActionRunning = true
-                        inlineError = null
-                        scope.launch {
-                            try {
-                                val s = apiClient.getService()
-                                val ref = mapDataRefInput.trim().ifEmpty { null }
-                                val res = withContext(Dispatchers.IO) {
-                                    s.finishMappingSession(sessionId, FinishSessionRequest(map_data_ref = ref))
+                            .border(1.dp, BorderHairline, RoundedCornerShape(6.dp))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "SESSION CONTROLS",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = Slate500
+                            )
+
+                            when (status) {
+                                "IDLE" -> {
+                                    Button(
+                                        onClick = {
+                                            scope.launch {
+                                                isExecutingAction = true
+                                                actionError = null
+                                                try {
+                                                    session = apiClient.getService().startMappingSession(sessionId)
+                                                } catch (t: Throwable) {
+                                                    actionError = ApiErrorParser.parse(t).message
+                                                } finally {
+                                                    isExecutingAction = false
+                                                }
+                                            }
+                                        },
+                                        enabled = !isExecutingAction,
+                                        shape = RoundedCornerShape(6.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .testTag("start_session_button")
+                                    ) {
+                                        Text("Start Mapping")
+                                    }
                                 }
-                                session = res
-                                robotStore.setActiveSessionId(null)
-                            } catch (e: Exception) {
-                                inlineError = ApiErrorParser.parse(e).message
-                            } finally {
-                                isActionRunning = false
+
+                                "MAPPING" -> {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    isExecutingAction = true
+                                                    actionError = null
+                                                    try {
+                                                        session = apiClient.getService().pauseMappingSession(sessionId)
+                                                    } catch (t: Throwable) {
+                                                        actionError = ApiErrorParser.parse(t).message
+                                                    } finally {
+                                                        isExecutingAction = false
+                                                    }
+                                                }
+                                            },
+                                            enabled = !isExecutingAction,
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = StatusAmber),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .defaultMinSize(minHeight = 48.dp)
+                                                .testTag("pause_session_button")
+                                        ) {
+                                            Text("Pause")
+                                        }
+
+                                        Button(
+                                            onClick = { showFinishDialog = true },
+                                            enabled = !isExecutingAction,
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .defaultMinSize(minHeight = 48.dp)
+                                                .testTag("finish_session_button")
+                                        ) {
+                                            Text("Finish")
+                                        }
+                                    }
+                                }
+
+                                "PAUSED" -> {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    isExecutingAction = true
+                                                    actionError = null
+                                                    try {
+                                                        session = apiClient.getService().resumeMappingSession(sessionId)
+                                                    } catch (t: Throwable) {
+                                                        actionError = ApiErrorParser.parse(t).message
+                                                    } finally {
+                                                        isExecutingAction = false
+                                                    }
+                                                }
+                                            },
+                                            enabled = !isExecutingAction,
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .defaultMinSize(minHeight = 48.dp)
+                                                .testTag("resume_session_button")
+                                        ) {
+                                            Text("Resume")
+                                        }
+
+                                        Button(
+                                            onClick = { showFinishDialog = true },
+                                            enabled = !isExecutingAction,
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .defaultMinSize(minHeight = 48.dp)
+                                                .testTag("finish_session_button")
+                                        ) {
+                                            Text("Finish")
+                                        }
+                                    }
+                                }
                             }
                         }
-                    },
-                    shape = RoundedCornerShape(4.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                    modifier = Modifier.testTag("confirm_finish_button")
-                ) {
-                    Text("Confirm finish")
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showFinishDialog = false },
-                    shape = RoundedCornerShape(4.dp)
+
+                Card(
+                    shape = RoundedCornerShape(6.dp),
+                    colors = CardDefaults.cardColors(containerColor = PureWhite),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, BorderHairline, RoundedCornerShape(6.dp))
                 ) {
-                    Text("Cancel", color = Slate600)
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SESSION METADATA",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = Slate500
+                            )
+                            StatusBadge(status = currentSession.status)
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = BorderHairline)
+
+                        KeyValRow(label = "Session ID", value = currentSession.id, isMonospace = true)
+                        KeyValRow(label = "Robot ID", value = currentSession.robot_id, isMonospace = true)
+                        KeyValRow(label = "SLAM Status", value = currentSession.slam_status ?: "None", isMonospace = true)
+                        KeyValRow(label = "Elapsed", value = "${currentSession.elapsed_ms / 1000}s", isMonospace = true)
+                        KeyValRow(
+                            label = "Pose Updates",
+                            value = "${currentSession.pose_update_count}",
+                            isMonospace = true
+                        )
+                        KeyValRow(label = "Map Reference", value = currentSession.map_data_ref ?: "None")
+                        KeyValRow(label = "Started At", value = currentSession.started_at ?: "Not started", isMonospace = true)
+                        KeyValRow(label = "Paused At", value = currentSession.paused_at ?: "None", isMonospace = true)
+                        KeyValRow(
+                            label = "Finished At",
+                            value = currentSession.finished_at ?: "Ongoing",
+                            isMonospace = true,
+                            showDivider = false
+                        )
+                    }
                 }
-            },
-            containerColor = PureWhite,
-            shape = RoundedCornerShape(6.dp)
-        )
+            }
+        }
+
+        if (showFinishDialog) {
+            AlertDialog(
+                onDismissRequest = { showFinishDialog = false },
+                title = { Text("Finish Mapping Session") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Optionally enter a map data reference identifier:", fontSize = 13.sp, color = Slate600)
+                        OutlinedTextField(
+                            value = mapDataRefInput,
+                            onValueChange = { mapDataRefInput = it },
+                            placeholder = { Text("map_ref_floor_1") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val ref = mapDataRefInput.trim().ifBlank { null }
+                            showFinishDialog = false
+                            scope.launch {
+                                isExecutingAction = true
+                                actionError = null
+                                try {
+                                    session = apiClient.getService().finishMappingSession(
+                                        sessionId,
+                                        FinishSessionRequest(map_data_ref = ref)
+                                    )
+                                } catch (t: Throwable) {
+                                    actionError = ApiErrorParser.parse(t).message
+                                } finally {
+                                    isExecutingAction = false
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)
+                    ) {
+                        Text("Finish Session")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showFinishDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 }

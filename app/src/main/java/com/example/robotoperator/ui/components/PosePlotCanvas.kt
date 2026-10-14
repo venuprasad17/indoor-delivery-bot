@@ -7,16 +7,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,211 +25,187 @@ import kotlin.math.sin
 fun PosePlotCanvas(
     currentPose: Pose,
     poseTrail: List<Pose>,
-    modifier: Modifier = Modifier,
-    heightDp: Int = 240
+    modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("pose_plot_canvas")
+            .background(PureWhite)
+            .border(1.dp, BorderHairline, RoundedCornerShape(6.dp))
+            .padding(12.dp)
     ) {
+        // Header info with coordinates & label
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Column {
+                Text(
+                    text = "LIVE POSE 2D PLOT",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Slate500
+                )
+                Text(
+                    text = "X: ${String.format("%.2f", currentPose.x)}m  Y: ${String.format("%.2f", currentPose.y)}m  θ: ${String.format("%.1f", Math.toDegrees(currentPose.theta))}°",
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Slate900
+                )
+            }
             Text(
-                text = "Pose plot (2D)",
-                color = Slate700,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Default
-            )
-            Text(
-                text = "Trail since screen opened",
-                color = Slate400,
-                fontSize = 11.sp
+                text = "Trail: ${poseTrail.size} pts",
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = Slate400
             )
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 2D Canvas
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(heightDp.dp)
-                .background(PureWhite, shape = RoundedCornerShape(6.dp))
-                .border(1.dp, Slate200, shape = RoundedCornerShape(6.dp))
+                .height(220.dp)
+                .background(SurfaceCanvas, RoundedCornerShape(4.dp))
+                .border(1.dp, BorderHairline, RoundedCornerShape(4.dp))
         ) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp)
-            ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
                 val canvasWidth = size.width
                 val canvasHeight = size.height
                 val centerX = canvasWidth / 2f
                 val centerY = canvasHeight / 2f
 
-                // Scale: 40 pixels per meter
-                val pixelsPerMeter = 40f
+                // Scale: 1 meter = 24 dp on screen
+                val pixelsPerMeter = 24.dp.toPx()
 
-                // Calculate offset so current robot pose stays near center
-                val robotX = currentPose.x.toFloat()
-                val robotY = currentPose.y.toFloat()
-                val robotTheta = currentPose.theta.toFloat()
-
-                // Coordinate transform: X is right, Y is up (standard robot / ROS frame)
-                fun worldToScreen(wx: Float, wy: Float): Offset {
-                    val sx = centerX + (wx - robotX) * pixelsPerMeter
-                    val sy = centerY - (wy - robotY) * pixelsPerMeter
-                    return Offset(sx, sy)
-                }
-
-                // 1. Draw Grid Lines (1 meter intervals)
-                val gridSpacing = pixelsPerMeter
-                val startX = (centerX % gridSpacing)
-                var gx = startX
+                // Draw Grid (every 1 meter)
+                val gridStep = pixelsPerMeter
+                var gx = centerX % gridStep
                 while (gx < canvasWidth) {
                     drawLine(
-                        color = Slate100,
+                        color = BorderHairline.copy(alpha = 0.8f),
                         start = Offset(gx, 0f),
                         end = Offset(gx, canvasHeight),
                         strokeWidth = 1f
                     )
-                    gx += gridSpacing
+                    gx += gridStep
                 }
-
-                val startY = (centerY % gridSpacing)
-                var gy = startY
+                var gy = centerY % gridStep
                 while (gy < canvasHeight) {
                     drawLine(
-                        color = Slate100,
+                        color = BorderHairline.copy(alpha = 0.8f),
                         start = Offset(0f, gy),
                         end = Offset(canvasWidth, gy),
                         strokeWidth = 1f
                     )
-                    gy += gridSpacing
+                    gy += gridStep
                 }
 
-                // 2. Center Crosshairs (origin at current robot view center)
+                // Draw Axes (X and Y centered)
                 drawLine(
                     color = Slate300,
                     start = Offset(0f, centerY),
                     end = Offset(canvasWidth, centerY),
-                    strokeWidth = 1f
+                    strokeWidth = 1.5f
                 )
                 drawLine(
                     color = Slate300,
                     start = Offset(centerX, 0f),
                     end = Offset(centerX, canvasHeight),
-                    strokeWidth = 1f
+                    strokeWidth = 1.5f
                 )
 
-                // 3. Draw Trail Path
+                // Function to convert world coords to screen
+                fun toScreen(wx: Double, wy: Double): Offset {
+                    val sx = centerX + (wx.toFloat() * pixelsPerMeter)
+                    val sy = centerY - (wy.toFloat() * pixelsPerMeter) // Invert Y
+                    return Offset(sx, sy)
+                }
+
+                // Draw Pose Trail
                 if (poseTrail.size > 1) {
                     val path = Path()
-                    val firstPt = worldToScreen(poseTrail[0].x.toFloat(), poseTrail[0].y.toFloat())
-                    path.moveTo(firstPt.x, firstPt.y)
-
+                    val first = toScreen(poseTrail.first().x, poseTrail.first().y)
+                    path.moveTo(first.x, first.y)
                     for (i in 1 until poseTrail.size) {
-                        val pt = worldToScreen(poseTrail[i].x.toFloat(), poseTrail[i].y.toFloat())
+                        val pt = toScreen(poseTrail[i].x, poseTrail[i].y)
                         path.lineTo(pt.x, pt.y)
                     }
-
                     drawPath(
                         path = path,
-                        color = PrimaryBlue.copy(alpha = 0.6f),
-                        style = Stroke(width = 2.5f, cap = StrokeCap.Round)
+                        color = ActionBlue.copy(alpha = 0.45f),
+                        style = Stroke(width = 2.5f)
                     )
                 }
 
-                // 4. Draw Current Robot Position & Heading Arrow
-                val robotScreenPos = Offset(centerX, centerY)
+                // Draw Current Robot Position & Heading
+                val robotScreen = toScreen(currentPose.x, currentPose.y)
 
-                // Robot base circle
+                // Robot Footprint Circle
                 drawCircle(
-                    color = PrimaryBlueLight,
-                    radius = 16f,
-                    center = robotScreenPos
+                    color = ActionBlue,
+                    radius = 9.dp.toPx(),
+                    center = robotScreen
                 )
                 drawCircle(
-                    color = PrimaryBlue,
-                    radius = 8f,
-                    center = robotScreenPos
+                    color = PureWhite,
+                    radius = 4.dp.toPx(),
+                    center = robotScreen
                 )
 
-                // Heading arrow: length 24px in direction of robotTheta (radians)
-                // In math coords: angle 0 is +X (right), PI/2 is +Y (up).
-                // Screen coords: +Y is down, so dy = -sin(theta)
-                val arrowLen = 22f
+                // Heading Arrow (based on theta)
+                val headingLength = 18.dp.toPx()
                 val arrowTip = Offset(
-                    robotScreenPos.x + arrowLen * cos(robotTheta),
-                    robotScreenPos.y - arrowLen * sin(robotTheta)
+                    x = robotScreen.x + (headingLength * cos(currentPose.theta)).toFloat(),
+                    y = robotScreen.y - (headingLength * sin(currentPose.theta)).toFloat()
                 )
-
                 drawLine(
-                    color = StatusGreenText,
-                    start = robotScreenPos,
+                    color = StatusAmber,
+                    start = robotScreen,
                     end = arrowTip,
-                    strokeWidth = 3.5f,
-                    cap = StrokeCap.Round
+                    strokeWidth = 3f
                 )
-
-                // Arrow head wings
-                val wingLen = 7f
-                val wingAngle = 0.5f
-                val wing1 = Offset(
-                    arrowTip.x - wingLen * cos(robotTheta - wingAngle),
-                    arrowTip.y + wingLen * sin(robotTheta - wingAngle)
-                )
-                val wing2 = Offset(
-                    arrowTip.x - wingLen * cos(robotTheta + wingAngle),
-                    arrowTip.y + wingLen * sin(robotTheta + wingAngle)
-                )
-
-                drawLine(
-                    color = StatusGreenText,
-                    start = arrowTip,
-                    end = wing1,
-                    strokeWidth = 3f,
-                    cap = StrokeCap.Round
-                )
-                drawLine(
-                    color = StatusGreenText,
-                    start = arrowTip,
-                    end = wing2,
-                    strokeWidth = 3f,
-                    cap = StrokeCap.Round
+                drawCircle(
+                    color = StatusAmber,
+                    radius = 3.dp.toPx(),
+                    center = arrowTip
                 )
             }
 
-            // Bottom-right scale indicator & coordinates badge
-            Row(
+            // Bottom-right scale legend
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .background(Slate900.copy(alpha = 0.75f), shape = RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .background(PureWhite.copy(alpha = 0.85f), RoundedCornerShape(2.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = "X: ${currentPose.formattedX()} Y: ${currentPose.formattedY()} θ: ${currentPose.formattedTheta()} rad",
-                    color = PureWhite,
+                    text = "Scale: 1m grid",
                     fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    color = Slate600
                 )
             }
 
-            // Top-left scale rule
-            Text(
-                text = "1 grid = 1.0 m",
-                color = Slate400,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
+            // Top-left label: Trail since screen opened
+            Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
-            )
+                    .background(PureWhite.copy(alpha = 0.85f), RoundedCornerShape(2.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "Trail since screen opened",
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Slate500
+                )
+            }
         }
     }
 }

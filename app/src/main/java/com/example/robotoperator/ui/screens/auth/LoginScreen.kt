@@ -4,20 +4,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -29,9 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.AuthManager
-import com.example.robotoperator.state.AuthState
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
+
+enum class AuthMode {
+    SIGN_IN,
+    REGISTER
+}
 
 @Composable
 fun LoginScreen(
@@ -40,335 +43,468 @@ fun LoginScreen(
     onNavigateServerSettings: () -> Unit,
     onLoginSuccess: () -> Unit
 ) {
-    var email by remember { mutableStateOf(settingsStore.lastLoginEmail) }
-    var password by remember { mutableStateOf("admin123") }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var isSubmitting by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var isSimMode by remember { mutableStateOf(settingsStore.isSimulationMode) }
+    var authMode by remember { mutableStateOf(AuthMode.SIGN_IN) }
 
-    val authState by authManager.authState.collectAsState()
+    // Sign in fields
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+
+    // Register fields (name, email, password - no role selector per backend contract)
+    var regName by remember { mutableStateOf("") }
+    var regEmail by remember { mutableStateOf("") }
+    var regPassword by remember { mutableStateOf("") }
+    var showRegPassword by remember { mutableStateOf(false) }
+
+    var isLoading by remember { mutableStateOf(false) }
+    var localValidationMessage by remember { mutableStateOf<String?>(null) }
+
+    val authError by authManager.authError.collectAsState()
     val scope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
-
-    LaunchedEffect(authState) {
-        when (val state = authState) {
-            is AuthState.Authenticated -> onLoginSuccess()
-            is AuthState.AdminForbidden -> errorMessage = state.message
-            is AuthState.AuthError -> errorMessage = state.message
-            else -> {}
-        }
-    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Slate50)
-            .padding(24.dp),
+            .background(SurfaceCanvas)
+            .padding(16.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(containerColor = PureWhite),
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 460.dp)
-                .testTag("login_card"),
-            shape = RoundedCornerShape(6.dp),
-            colors = CardDefaults.cardColors(containerColor = PureWhite),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Slate200)
+                .border(1.dp, BorderHairline, RoundedCornerShape(8.dp))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Header
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column {
                     Text(
                         text = "Robot Operator",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Slate900
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Slate900,
+                        letterSpacing = (-0.3).sp
                     )
                     Text(
-                        text = "Sign in with administrator credentials",
+                        text = "Autonomous Indoor Delivery Fleet",
                         fontSize = 13.sp,
-                        color = Slate500
+                        color = Slate500,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
-                // Backend Selector (Live Backend vs Safety Simulation Mode)
+                // Server Target Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Slate100, shape = RoundedCornerShape(4.dp))
-                        .padding(2.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Slate100)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "HOST: ${settingsStore.serverUrl}",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = Slate700,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Text(
+                        text = "Edit",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ActionBlue,
+                        modifier = Modifier
+                            .clickable(onClick = onNavigateServerSettings)
+                            .padding(4.dp)
+                            .testTag("edit_host_button")
+                    )
+                }
+
+                // Auth Mode Tabs: Sign In vs Register
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Slate100)
+                        .padding(3.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .background(
-                                if (!isSimMode) PureWhite else Slate100,
-                                shape = RoundedCornerShape(4.dp)
-                            )
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (authMode == AuthMode.SIGN_IN) PureWhite else Slate100)
                             .clickable {
-                                isSimMode = false
-                                settingsStore.isSimulationMode = false
-                                errorMessage = null
+                                authMode = AuthMode.SIGN_IN
+                                authManager.clearError()
+                                localValidationMessage = null
                             }
-                            .padding(vertical = 6.dp)
-                            .testTag("mode_live_server"),
+                            .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Live Server",
-                            fontSize = 12.sp,
-                            fontWeight = if (!isSimMode) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (!isSimMode) Slate900 else Slate600
+                            text = "Sign In",
+                            fontSize = 13.sp,
+                            fontWeight = if (authMode == AuthMode.SIGN_IN) FontWeight.Bold else FontWeight.Medium,
+                            color = if (authMode == AuthMode.SIGN_IN) Slate900 else Slate500
                         )
                     }
 
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .background(
-                                if (isSimMode) PureWhite else Slate100,
-                                shape = RoundedCornerShape(4.dp)
-                            )
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (authMode == AuthMode.REGISTER) PureWhite else Slate100)
                             .clickable {
-                                isSimMode = true
-                                settingsStore.isSimulationMode = true
-                                errorMessage = null
+                                authMode = AuthMode.REGISTER
+                                authManager.clearError()
+                                localValidationMessage = null
                             }
-                            .padding(vertical = 6.dp)
-                            .testTag("mode_simulation"),
+                            .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Simulation Mode",
-                            fontSize = 12.sp,
-                            fontWeight = if (isSimMode) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (isSimMode) PrimaryBlue else Slate600
+                            text = "Register",
+                            fontSize = 13.sp,
+                            fontWeight = if (authMode == AuthMode.REGISTER) FontWeight.Bold else FontWeight.Medium,
+                            color = if (authMode == AuthMode.REGISTER) Slate900 else Slate500
                         )
                     }
                 }
 
-                HorizontalDivider(color = Slate200, thickness = 1.dp)
+                // Display Error (Network or Validation)
+                val displayedError = localValidationMessage ?: authError
+                if (!displayedError.isNullOrBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(StatusRedBg)
+                            .border(1.dp, StatusRedBorder, RoundedCornerShape(4.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = displayedError,
+                            color = StatusRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
 
-                // Email
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Email",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Slate700
-                    )
+                if (authMode == AuthMode.SIGN_IN) {
+                    // Unified Sign In Form
                     OutlinedTextField(
                         value = email,
                         onValueChange = {
                             email = it
-                            settingsStore.lastLoginEmail = it.trim()
-                            errorMessage = null
+                            authManager.clearError()
+                            localValidationMessage = null
                         },
+                        label = { Text("Email") },
+                        placeholder = { Text("operator@example.com") },
                         singleLine = true,
-                        placeholder = { Text("admin@example.com") },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Email,
                             imeAction = ImeAction.Next
                         ),
-                        keyboardActions = KeyboardActions(
-                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                        ),
+                        shape = RoundedCornerShape(6.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("email_input"),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = PrimaryBlue,
-                            unfocusedBorderColor = Slate300
-                        )
+                            .testTag("login_email_input")
                     )
-                }
 
-                // Password
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Password",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Slate700
-                    )
                     OutlinedTextField(
                         value = password,
                         onValueChange = {
                             password = it
-                            errorMessage = null
+                            authManager.clearError()
+                            localValidationMessage = null
                         },
+                        label = { Text("Password") },
                         singleLine = true,
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showPassword = !showPassword }) {
+                                Icon(
+                                    imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showPassword) "Hide password" else "Show password",
+                                    tint = Slate500
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Done
                         ),
                         keyboardActions = KeyboardActions(
                             onDone = {
-                                focusManager.clearFocus()
-                                if (email.isNotBlank() && !isSubmitting) {
-                                    isSubmitting = true
-                                    settingsStore.lastLoginEmail = email.trim()
+                                if (email.isNotBlank() && password.isNotBlank() && !isLoading) {
                                     scope.launch {
-                                        authManager.login(email, password)
-                                        isSubmitting = false
+                                        isLoading = true
+                                        val ok = authManager.login(email = email, pass = password)
+                                        isLoading = false
+                                        if (ok) onLoginSuccess()
                                     }
                                 }
                             }
                         ),
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { passwordVisible = !passwordVisible },
-                                modifier = Modifier.testTag("toggle_password_visibility")
-                            ) {
-                                Icon(
-                                    imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = "Toggle password visibility",
-                                    tint = Slate500
-                                )
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("login_password_input")
+                    )
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                isLoading = true
+                                val ok = authManager.login(email = email, pass = password)
+                                isLoading = false
+                                if (ok) onLoginSuccess()
                             }
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("password_input"),
+                        enabled = email.isNotBlank() && password.isNotBlank() && !isLoading,
                         shape = RoundedCornerShape(6.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = PrimaryBlue,
-                            unfocusedBorderColor = Slate300
-                        )
-                    )
-                }
-
-                // Inline Error and Simulation Mode Fallback Button
-                if (!errorMessage.isNullOrEmpty()) {
-                    Column(
+                        colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(StatusRedBg, shape = RoundedCornerShape(4.dp))
-                            .border(1.dp, StatusRedBorder, shape = RoundedCornerShape(4.dp))
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("sign_in_button")
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = PureWhite,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text(
+                                text = "Sign In",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = errorMessage!!,
-                            color = StatusRedText,
+                            text = "Need an account? ",
                             fontSize = 13.sp,
-                            modifier = Modifier.testTag("login_error_text")
+                            color = Slate600
                         )
-
-                        // If server cannot be reached, offer direct one-click Simulation Mode
-                        if (errorMessage!!.contains("Cannot reach server", ignoreCase = true) || !isSimMode) {
-                            Button(
-                                onClick = {
-                                    isSimMode = true
-                                    settingsStore.isSimulationMode = true
-                                    settingsStore.lastLoginEmail = email.trim()
-                                    errorMessage = null
-                                    isSubmitting = true
-                                    scope.launch {
-                                        authManager.login(email, password)
-                                        isSubmitting = false
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = PureWhite,
-                                    contentColor = PrimaryBlue
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, PrimaryBlue),
-                                shape = RoundedCornerShape(4.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(38.dp)
-                                    .testTag("start_simulation_button")
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Sign in with Safety Simulation Mode", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                    }
-                }
-
-                // Sign in Button
-                Button(
-                    onClick = {
-                        focusManager.clearFocus()
-                        isSubmitting = true
-                        errorMessage = null
-                        settingsStore.lastLoginEmail = email.trim()
-                        scope.launch {
-                            val res = authManager.login(email, password)
-                            if (res.isFailure) {
-                                errorMessage = res.exceptionOrNull()?.message ?: "Sign in failed"
-                            }
-                            isSubmitting = false
-                        }
-                    },
-                    enabled = !isSubmitting && email.isNotBlank(),
-                    shape = RoundedCornerShape(4.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("sign_in_button")
-                ) {
-                    if (isSubmitting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = PureWhite
-                        )
-                    } else {
                         Text(
-                            text = if (isSimMode) "Sign in (Simulation Mode)" else "Sign in",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium
+                            text = "Register here",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ActionBlue,
+                            modifier = Modifier
+                                .clickable {
+                                    authMode = AuthMode.REGISTER
+                                    authManager.clearError()
+                                    localValidationMessage = null
+                                }
+                                .padding(4.dp)
+                                .testTag("switch_to_register_link")
                         )
+                    }
+
+                } else {
+                    // Unified Register Form (email, password, name - no role selection)
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(ActionBlueSubtle)
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "The first account registered on the server becomes ADMIN. All subsequent registrations become standard USER accounts.",
+                                fontSize = 11.sp,
+                                color = ActionBlue,
+                                lineHeight = 16.sp
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = regName,
+                            onValueChange = {
+                                regName = it
+                                authManager.clearError()
+                                localValidationMessage = null
+                            },
+                            label = { Text("Full Name") },
+                            placeholder = { Text("Alex Rivera") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Next
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("register_name_input")
+                        )
+
+                        OutlinedTextField(
+                            value = regEmail,
+                            onValueChange = {
+                                regEmail = it
+                                authManager.clearError()
+                                localValidationMessage = null
+                            },
+                            label = { Text("Work Email") },
+                            placeholder = { Text("alex@example.com") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Email,
+                                imeAction = ImeAction.Next
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("register_email_input")
+                        )
+
+                        OutlinedTextField(
+                            value = regPassword,
+                            onValueChange = {
+                                regPassword = it
+                                authManager.clearError()
+                                localValidationMessage = null
+                            },
+                            label = { Text("Password (min 6 characters)") },
+                            singleLine = true,
+                            visualTransformation = if (showRegPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showRegPassword = !showRegPassword }) {
+                                    Icon(
+                                        imageVector = if (showRegPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (showRegPassword) "Hide password" else "Show password",
+                                        tint = Slate500
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction = ImeAction.Done
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("register_password_input")
+                        )
+
+                        Button(
+                            onClick = {
+                                if (regName.isBlank()) {
+                                    localValidationMessage = "Please enter your full name."
+                                    return@Button
+                                }
+                                if (regEmail.isBlank() || !regEmail.contains("@")) {
+                                    localValidationMessage = "Please enter a valid email address."
+                                    return@Button
+                                }
+                                if (regPassword.length < 6) {
+                                    localValidationMessage = "Password must be at least 6 characters long."
+                                    return@Button
+                                }
+
+                                scope.launch {
+                                    isLoading = true
+                                    val ok = authManager.register(
+                                        name = regName,
+                                        email = regEmail,
+                                        pass = regPassword
+                                    )
+                                    isLoading = false
+                                    if (ok) onLoginSuccess()
+                                }
+                            },
+                            enabled = regName.isNotBlank() && regEmail.isNotBlank() && regPassword.isNotBlank() && !isLoading,
+                            shape = RoundedCornerShape(6.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 48.dp)
+                                .testTag("register_submit_button")
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = PureWhite,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Text(
+                                    text = "Register & Sign In",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Already have an account? ",
+                                fontSize = 13.sp,
+                                color = Slate600
+                            )
+                            Text(
+                                text = "Sign in",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ActionBlue,
+                                modifier = Modifier
+                                    .clickable {
+                                        authMode = AuthMode.SIGN_IN
+                                        authManager.clearError()
+                                        localValidationMessage = null
+                                    }
+                                    .padding(4.dp)
+                                    .testTag("switch_to_signin_link")
+                            )
+                        }
                     }
                 }
 
-                // Target Server & Server Settings Link
+                HorizontalDivider(thickness = 1.dp, color = BorderHairline)
+
+                // Server settings link footer
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = if (isSimMode) "Target: Simulation Engine" else "Target: ${settingsStore.serverUrl}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = Slate500,
-                        modifier = Modifier.weight(1f)
+                        text = "Configure Server Endpoint",
+                        color = ActionBlue,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clickable(onClick = onNavigateServerSettings)
+                            .padding(8.dp)
+                            .testTag("server_settings_link")
                     )
-
-                    TextButton(
-                        onClick = onNavigateServerSettings,
-                        shape = RoundedCornerShape(4.dp),
-                        modifier = Modifier.testTag("server_settings_link")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = null,
-                            tint = PrimaryBlue,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Server settings",
-                            color = PrimaryBlue,
-                            fontSize = 13.sp
-                        )
-                    }
                 }
             }
         }

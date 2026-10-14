@@ -7,51 +7,45 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-// Operations light theme - strictly light surfaces, slate text, muted blue primary
-private val OperationsColorScheme = lightColorScheme(
-    primary = PrimaryBlue,
+private val LightColorScheme = lightColorScheme(
+    primary = ActionBlue,
     onPrimary = PureWhite,
-    primaryContainer = PrimaryBlueLight,
-    onPrimaryContainer = PrimaryBlueDark,
+    primaryContainer = ActionBlueSubtle,
+    onPrimaryContainer = ActionBlueHover,
     secondary = Slate700,
     onSecondary = PureWhite,
     secondaryContainer = Slate100,
-    onSecondaryContainer = Slate900,
-    tertiary = Slate600,
-    onTertiary = PureWhite,
-    background = Slate50,
+    onSecondaryContainer = Slate800,
+    background = PureWhite,
     onBackground = Slate900,
     surface = PureWhite,
     onSurface = Slate900,
-    surfaceVariant = Slate100,
+    surfaceVariant = SurfaceCanvas,
     onSurfaceVariant = Slate700,
-    outline = Slate300,
+    outline = BorderHairline,
     outlineVariant = Slate200,
-    error = EStopRed,
+    error = StatusRed,
     onError = PureWhite,
     errorContainer = StatusRedBg,
-    onErrorContainer = StatusRedText
+    onErrorContainer = StatusRed
 )
 
-// 6px / 6dp radius everywhere per spec
-val OperationsShapes = Shapes(
+val TechnicalShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),
     small = RoundedCornerShape(6.dp),
     medium = RoundedCornerShape(6.dp),
-    large = RoundedCornerShape(8.dp),
-    extraLarge = RoundedCornerShape(8.dp)
+    large = RoundedCornerShape(6.dp),
+    extraLarge = RoundedCornerShape(6.dp)
 )
 
 @Composable
-fun MyApplicationTheme(
-    darkTheme: Boolean = false, // Light theme only per spec
-    dynamicColor: Boolean = false, // Keep consistent operations styling
+fun RobotOperatorTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = OperationsColorScheme,
+        colorScheme = LightColorScheme,
         typography = Typography,
-        shapes = OperationsShapes,
+        shapes = TechnicalShapes,
         content = content
     )
 }

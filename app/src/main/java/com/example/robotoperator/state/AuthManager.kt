@@ -3,88 +3,123 @@ package com.example.robotoperator.state
 import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
 import com.example.robotoperator.data.model.LoginRequest
+import com.example.robotoperator.data.model.RegisterRequest
+import com.example.robotoperator.data.model.RobotStatus
 import com.example.robotoperator.data.model.User
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-sealed interface AuthState {
-    data object Unauthenticated : AuthState
-    data object Authenticating : AuthState
-    data class Authenticated(val user: User) : AuthState
-    data class AdminForbidden(val message: String = "This app is for administrators") : AuthState
-    data class AuthError(val message: String) : AuthState
-}
+class AuthManager(private val apiClient: ApiClient) {
 
-class AuthManager(
-    private val apiClient: ApiClient,
-    private val robotStore: RobotStateHolder,
-    private val onLogoutCallback: () -> Unit = {}
-) {
+    private val _currentUser = MutableStateFlow<User?>(null)
+    val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
-    val authState: StateFlow<AuthState> = _authState.asStateFlow()
+    private val _grantedRobots = MutableStateFlow<List<RobotStatus>>(emptyList())
+    val grantedRobots: StateFlow<List<RobotStatus>> = _grantedRobots.asStateFlow()
 
-    suspend fun login(email: String, password: String):Result<User> {
-        _authState.value = AuthState.Authenticating
-        return try {
-            val service = apiClient.getService()
-            val loginRes = service.login(LoginRequest(email.trim(), password))
-            apiClient.accessToken = loginRes.access_token
+    private val _isAuthenticated = MutableStateFlow(false)
+    val isAuthenticated: StateFlow<Boolean> = _isAuthenticated.asStateFlow()
 
-            // Verify user and ensure role is ADMIN
-            val me = service.getMe()
-            if (!me.role.equals("ADMIN", ignoreCase = true)) {
-                // App is ADMIN only
-                apiClient.clearAuth()
-                _authState.value = AuthState.AdminForbidden()
-                Result.failure(IllegalAccessException("This app is for administrators"))
-            } else {
-                _authState.value = AuthState.Authenticated(me)
-                Result.success(me)
-            }
-        } catch (e: Exception) {
-            apiClient.clearAuth()
-            val parsed = ApiErrorParser.parse(e)
-            val msg = parsed.message
-            _authState.value = AuthState.AuthError(msg)
-            Result.failure(Exception(msg))
+    private val _authError = MutableStateFlow<String?>(null)
+    val authError: StateFlow<String?> = _authError.asStateFlow()
+
+    init {
+        apiClient.onAuthRevoked = {
+            logoutLocal("Session expired. Please sign in again.")
         }
     }
 
-    suspend fun checkExistingSession(): Boolean {
-        // If we have an existing session (or refresh cookie), attempt me or refresh
+    suspend fun login(email: String, pass: String): Boolean {
+        _authError.value = null
         return try {
             val service = apiClient.getService()
+            val loginResp = service.login(LoginRequest(email = email.trim(), password = pass))
+            apiClient.setAuth(loginResp)
+
             val me = service.getMe()
-            if (me.role.equals("ADMIN", ignoreCase = true)) {
-                _authState.value = AuthState.Authenticated(me)
-                true
-            } else {
-                logout()
-                _authState.value = AuthState.AdminForbidden()
-                false
+            _currentUser.value = me
+
+            // For USER role, fetch granted robots
+            if (me.role == "USER") {
+                try {
+                    _grantedRobots.value = service.getMyRobots()
+                } catch (_: Exception) {
+                    _grantedRobots.value = emptyList()
+                }
             }
-        } catch (e: Exception) {
+
+            _isAuthenticated.value = true
+            true
+        } catch (t: Throwable) {
+            val parsed = ApiErrorParser.parse(t)
+            _authError.value = parsed.message
             false
+        }
+    }
+
+    suspend fun register(name: String, email: String, pass: String): Boolean {
+        _authError.value = null
+        return try {
+            val service = apiClient.getService()
+            val regResp = service.register(
+                RegisterRequest(
+                    email = email.trim(),
+                    password = pass,
+                    name = name.trim()
+                )
+            )
+            // Auto-login: response includes access_token directly
+            apiClient.setAuth(regResp)
+
+            val me = service.getMe()
+            _currentUser.value = me
+
+            if (me.role == "USER") {
+                try {
+                    _grantedRobots.value = service.getMyRobots()
+                } catch (_: Exception) {
+                    _grantedRobots.value = emptyList()
+                }
+            }
+
+            _isAuthenticated.value = true
+            true
+        } catch (t: Throwable) {
+            val parsed = ApiErrorParser.parse(t)
+            _authError.value = parsed.message
+            false
+        }
+    }
+
+    suspend fun refreshGrantedRobots() {
+        val user = _currentUser.value ?: return
+        if (user.role == "USER") {
+            try {
+                _grantedRobots.value = apiClient.getService().getMyRobots()
+            } catch (_: Exception) {}
         }
     }
 
     suspend fun logout() {
         try {
             apiClient.getService().logout()
-        } catch (e: Exception) {
-            // Ignore network logout errors
+        } catch (_: Exception) {
+            // Ignore error on server logout
         } finally {
-            apiClient.clearAuth()
-            _authState.value = AuthState.Unauthenticated
-            onLogoutCallback()
+            logoutLocal(null)
         }
     }
 
-    fun handleForbidden() {
+    fun logoutLocal(message: String?) {
         apiClient.clearAuth()
-        _authState.value = AuthState.AdminForbidden()
-        onLogoutCallback()
+        _currentUser.value = null
+        _grantedRobots.value = emptyList()
+        _isAuthenticated.value = false
+        _authError.value = message
+    }
+
+    fun clearError() {
+        _authError.value = null
     }
 }

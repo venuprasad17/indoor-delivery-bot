@@ -9,37 +9,36 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.*
+import com.example.ui.theme.PureWhite
+import com.example.ui.theme.StatusRed
 
 @Composable
 fun EStopBanner(
-    onResetClick: () -> Unit,
+    errorMessage: String?,
     isResetting: Boolean,
+    onResetClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("estop_persistent_banner"),
-        color = EStopRed,
-        contentColor = PureWhite
+            .background(StatusRed)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f, fill = false)
             ) {
                 Icon(
                     imageVector = Icons.Default.Warning,
@@ -47,19 +46,19 @@ fun EStopBanner(
                     tint = PureWhite,
                     modifier = Modifier.size(20.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "EMERGENCY STOP ACTIVE",
+                        text = "EMERGENCY STOP ENGAGED",
+                        color = PureWhite,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = PureWhite
+                        fontFamily = FontFamily.Monospace
                     )
                     Text(
-                        text = "Robot hardware motion halted",
-                        fontSize = 11.sp,
-                        color = PureWhite.copy(alpha = 0.85f)
+                        text = "Robot actuators cut. Mode reset required.",
+                        color = PureWhite.copy(alpha = 0.9f),
+                        fontSize = 11.sp
                     )
                 }
             }
@@ -69,27 +68,45 @@ fun EStopBanner(
                 enabled = !isResetting,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = PureWhite,
-                    contentColor = EStopRed
+                    contentColor = StatusRed
                 ),
                 shape = RoundedCornerShape(4.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 modifier = Modifier
-                    .height(36.dp)
+                    .defaultMinSize(minHeight = 48.dp)
                     .testTag("reset_estop_button")
             ) {
                 if (isResetting) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = EStopRed
+                        color = StatusRed,
+                        strokeWidth = 2.dp
                     )
                 } else {
                     Text(
-                        text = "Reset emergency stop",
+                        text = "Reset E-Stop",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
+            }
+        }
+
+        if (!errorMessage.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(PureWhite.copy(alpha = 0.15f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = errorMessage,
+                    color = PureWhite,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
             }
         }
     }

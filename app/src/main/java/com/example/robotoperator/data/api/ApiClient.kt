@@ -1,12 +1,13 @@
 package com.example.robotoperator.data.api
 
 import com.example.robotoperator.data.model.LoginResponse
+import com.example.robotoperator.data.model.RefreshResponse
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -14,26 +15,23 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-class ApiClient(
-    val settingsStore: ServerSettingsStore,
-    private val onAuthExpired: () -> Unit
-) {
+class ApiClient(private val settingsStore: ServerSettingsStore) {
 
-    // Simulation Engine for Safety Simulation Mode / Offline Testing
-    val simulationEngine = SimulationEngine(settingsStore)
-
-    // Keep access token in memory per spec
+    // Access token is held in-memory ONLY
     @Volatile
-    var accessToken: String? = null
+    private var accessToken: String? = null
 
-    // Cookie storage for native httpOnly refresh_token cookie
+    var onAuthRevoked: (() -> Unit)? = null
+
+    // In-memory cookie jar to retain httpOnly refresh_token cookie
     private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
 
-    val cookieJar = object : CookieJar {
+    private val cookieJar = object : CookieJar {
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            val list = cookieStore.getOrPut(url.host) { mutableListOf() }
+            val host = url.host
+            val list = cookieStore.getOrPut(host) { mutableListOf() }
             synchronized(list) {
-                for (cookie in cookies) {
+                cookies.forEach { cookie ->
                     list.removeAll { it.name == cookie.name }
                     list.add(cookie)
                 }
@@ -44,158 +42,148 @@ class ApiClient(
             val list = cookieStore[url.host] ?: return emptyList()
             val now = System.currentTimeMillis()
             synchronized(list) {
-                // remove expired
                 list.removeAll { it.expiresAt < now }
                 return list.toList()
             }
         }
     }
 
-    private val isRefreshing = AtomicBoolean(false)
-    private val refreshLock = Any()
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.BASIC
+    }
 
-    val moshi: Moshi = Moshi.Builder()
+    private val isRefreshing = AtomicBoolean(false)
+
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val original = chain.request()
+                val requestBuilder = original.newBuilder()
+
+                val token = accessToken
+                if (!token.isNullOrBlank() && original.header("Authorization") == null) {
+                    requestBuilder.header("Authorization", "Bearer $token")
+                }
+                chain.proceed(requestBuilder.build())
+            }
+            .authenticator { _, response ->
+                if (responseCount(response) >= 2) {
+                    notifyAuthRevoked()
+                    return@authenticator null
+                }
+
+                val path = response.request.url.encodedPath
+                if (path.contains("auth/login") || path.contains("auth/refresh")) {
+                    notifyAuthRevoked()
+                    return@authenticator null
+                }
+
+                val refreshed = performSyncRefresh()
+                if (refreshed && !accessToken.isNullOrBlank()) {
+                    response.request.newBuilder()
+                        .header("Authorization", "Bearer $accessToken")
+                        .build()
+                } else {
+                    notifyAuthRevoked()
+                    null
+                }
+            }
+            .addInterceptor(loggingInterceptor)
+            .build()
+    }
+
+    private val moshi: Moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
         .build()
 
-    private val authInterceptor = Interceptor { chain ->
-        val original = chain.request()
-
-        // If Safety Simulation Mode is active, intercept with local simulation engine
-        if (settingsStore.isSimulationMode) {
-            val simResponse = simulationEngine.handleRequest(original)
-            if (simResponse != null) {
-                return@Interceptor simResponse
-            }
-        }
-
-        val path = original.url.encodedPath
-
-        // Skip auth header on public/health/auth endpoints
-        if (path.contains("/auth/login") || path.contains("/health")) {
-            return@Interceptor chain.proceed(original)
-        }
-
-        val token = accessToken
-        val request = if (!token.isNullOrEmpty()) {
-            original.newBuilder()
-                .header("Authorization", "Bearer $token")
-                .build()
-        } else {
-            original
-        }
-
-        val response = chain.proceed(request)
-
-        // Handle 401: try /auth/refresh once and retry request
-        if (response.code == 401 && !path.contains("/auth/refresh") && !path.contains("/auth/login")) {
-            response.close()
-            val refreshed = refreshAccessTokenSync()
-            if (refreshed) {
-                val newToken = accessToken
-                val retryRequest = original.newBuilder()
-                    .header("Authorization", "Bearer $newToken")
-                    .build()
-                return@Interceptor chain.proceed(retryRequest)
-            } else {
-                onAuthExpired()
-            }
-        }
-
-        response
-    }
-
-    val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .cookieJar(cookieJar)
-        .addInterceptor(authInterceptor)
-        .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
-        })
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-    // Dynamic baseUrl intercepting
     private var currentBaseUrl: String = ""
-    private var cachedRetrofit: Retrofit? = null
-    private var cachedService: ApiService? = null
+    private var cachedApiService: ApiService? = null
 
-    @Synchronized
     fun getService(): ApiService {
-        val configuredUrl = settingsStore.serverUrl.trimEnd('/') + "/"
-        if (cachedService != null && currentBaseUrl == configuredUrl) {
-            return cachedService!!
+        val baseUrl = settingsStore.serverUrl.removeSuffix("/") + "/"
+        if (cachedApiService == null || currentBaseUrl != baseUrl) {
+            currentBaseUrl = baseUrl
+            val retrofit = Retrofit.Builder()
+                .baseUrl(baseUrl)
+                .client(okHttpClient)
+                .addConverterFactory(MoshiConverterFactory.create(moshi))
+                .build()
+            cachedApiService = retrofit.create(ApiService::class.java)
         }
-
-        currentBaseUrl = configuredUrl
-        val retrofit = Retrofit.Builder()
-            .baseUrl(configuredUrl)
-            .client(okHttpClient)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-
-        cachedRetrofit = retrofit
-        val service = retrofit.create(ApiService::class.java)
-        cachedService = service
-        return service
+        return cachedApiService!!
     }
 
-    /**
-     * Refreshes the access token synchronously.
-     * Uses cookie jar for the refresh token.
-     * // TODO: confirm refresh strategy with backend and store it in expo-secure-store if provided
-     */
-    fun refreshAccessTokenSync(): Boolean {
-        if (settingsStore.isSimulationMode) {
-            accessToken = "sim_jwt_token_${System.currentTimeMillis()}"
-            return true
-        }
-
-        synchronized(refreshLock) {
-            return try {
-                val refreshUrl = settingsStore.serverUrl.trimEnd('/') + "/auth/refresh"
-                val rawClient = OkHttpClient.Builder()
-                    .cookieJar(cookieJar)
-                    .connectTimeout(8, TimeUnit.SECONDS)
-                    .readTimeout(8, TimeUnit.SECONDS)
-                    .build()
-
-                val body = "".toRequestBody("application/json".toMediaType())
-                val request = Request.Builder()
-                    .url(refreshUrl)
-                    .post(body)
-                    .build()
-
-                val response = rawClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val responseStr = response.body?.string() ?: ""
-                    val adapter = moshi.adapter(LoginResponse::class.java)
-                    val loginRes = adapter.fromJson(responseStr)
-                    if (loginRes != null && loginRes.access_token.isNotEmpty()) {
-                        accessToken = loginRes.access_token
-
-                        // TODO: confirm refresh strategy with backend
-                        if (!loginRes.refresh_token.isNullOrEmpty()) {
-                            settingsStore.savedRefreshToken = loginRes.refresh_token
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } catch (e: Exception) {
-                false
-            }
-        }
+    fun setAuth(loginResponse: LoginResponse) {
+        this.accessToken = loginResponse.access_token
     }
+
+    fun setAccessToken(token: String?) {
+        this.accessToken = token
+    }
+
+    fun getAccessToken(): String? = accessToken
 
     fun clearAuth() {
         accessToken = null
         cookieStore.clear()
-        // TODO: confirm refresh strategy with backend
-        settingsStore.savedRefreshToken = null
+    }
+
+    suspend fun refreshAuth(): Boolean = withContext(Dispatchers.IO) {
+        performSyncRefresh()
+    }
+
+    private fun responseCount(response: Response): Int {
+        var count = 1
+        var prior = response.priorResponse
+        while (prior != null) {
+            count++
+            prior = prior.priorResponse
+        }
+        return count
+    }
+
+    private fun performSyncRefresh(): Boolean {
+        if (!isRefreshing.compareAndSet(false, true)) {
+            Thread.sleep(500)
+            return !accessToken.isNullOrBlank()
+        }
+
+        return try {
+            val refreshUrl = "${settingsStore.serverUrl.removeSuffix("/")}/auth/refresh"
+            val request = Request.Builder()
+                .url(refreshUrl)
+                .post(RequestBody.create(null, ByteArray(0)))
+                .build()
+
+            val refreshClient = okHttpClient.newBuilder().authenticator(Authenticator.NONE).build()
+            val resp = refreshClient.newCall(request).execute()
+            if (resp.isSuccessful) {
+                val body = resp.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val adapter = moshi.adapter(RefreshResponse::class.java)
+                    val refreshResp = adapter.fromJson(body)
+                    if (refreshResp != null && refreshResp.access_token.isNotBlank()) {
+                        accessToken = refreshResp.access_token
+                        return true
+                    }
+                }
+            }
+            clearAuth()
+            false
+        } catch (e: Exception) {
+            clearAuth()
+            false
+        } finally {
+            isRefreshing.set(false)
+        }
+    }
+
+    private fun notifyAuthRevoked() {
+        clearAuth()
+        onAuthRevoked?.invoke()
     }
 }

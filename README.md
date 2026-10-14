@@ -23,7 +23,5 @@ Internal operations mobile application for the Autonomous Indoor Delivery Robot 
    - Admin-only access. Non-admin roles receive an explicit notice and cannot access robot controls.
    - JWT access tokens stored securely in memory with automated HTTP-only cookie refresh interception on 401.
 
-3. **Running the App**:
-   - Built with Android Studio / Gradle on modern Android (API 24 - 36).
-   - Tap "Test connection" on the Server Settings screen to ensure connectivity to the FastAPI backend.
-   - Sign in using administrator credentials to view live telemetry, manage mapping sessions, configure destination waypoints, and dispatch delivery missions.
+3. **Safety Simulation Mode**:
+   - When physical robot hardware is offline or local testing is required, the app includes an embedded operations simulation engine with live 2D telemetry, active mapping, destinations, and delivery missions.

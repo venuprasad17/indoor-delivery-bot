@@ -13,99 +13,147 @@ object ApiErrorParser {
         val statusCode: Int = 0
     )
 
+    fun parseErrorMessage(throwable: Throwable): String {
+        return parse(throwable).message
+    }
+
     fun parse(throwable: Throwable): ParsedError {
         return when (throwable) {
             is HttpException -> {
                 val code = throwable.code()
+                if (code == 429) {
+                    return ParsedError(
+                        message = "Too many attempts, try again later.",
+                        statusCode = 429
+                    )
+                }
+
+                if (code == 501) {
+                    return ParsedError(
+                        message = "Not available yet on the server",
+                        statusCode = 501
+                    )
+                }
+
                 val errorBody = try {
                     throwable.response()?.errorBody()?.string()
                 } catch (e: Exception) {
                     null
                 }
-                parseHttpError(code, errorBody)
+
+                if (errorBody.isNullOrBlank()) {
+                    return ParsedError(
+                        message = when (code) {
+                            400 -> "Bad request"
+                            401 -> "Authentication required"
+                            403 -> "This app is for administrators"
+                            404 -> "Resource not found"
+                            409 -> "Resource conflict"
+                            422 -> "Unprocessable entity"
+                            423 -> "Robot locked because of emergency stop"
+                            500 -> "Server error"
+                            else -> "Request failed with code $code"
+                        },
+                        statusCode = code
+                    )
+                }
+
+                parseErrorBody(errorBody, code)
             }
-            is IOException -> ParsedError(
-                message = "Cannot reach server. Retrying.",
-                statusCode = -1
-            )
-            else -> ParsedError(
-                message = throwable.localizedMessage ?: "Unexpected error",
-                statusCode = -2
-            )
+            is IOException -> {
+                ParsedError(
+                    message = "Cannot reach server. Retrying.",
+                    statusCode = -1
+                )
+            }
+            else -> {
+                ParsedError(
+                    message = throwable.localizedMessage ?: "Unexpected error",
+                    statusCode = -2
+                )
+            }
         }
     }
 
-    fun parseHttpError(statusCode: Int, errorBody: String?): ParsedError {
-        if (statusCode == 429) {
-            return ParsedError("Too many attempts. Try again later.", errorCode = "RATE_LIMITED", statusCode = 429)
-        }
-        if (statusCode == 501) {
-            return ParsedError("Not available yet on the server", errorCode = "NOT_IMPLEMENTED", statusCode = 501)
-        }
-        if (statusCode == 423) {
-            return ParsedError("Locked by emergency stop", errorCode = "LOCKED", statusCode = 423)
-        }
-
-        if (errorBody.isNullOrBlank()) {
-            val msg = when (statusCode) {
-                401 -> "Unauthorized. Please sign in again."
-                403 -> "This app is for administrators"
-                404 -> "Not found on server"
-                409 -> "Resource conflict"
-                500 -> "Server internal error"
-                else -> "HTTP $statusCode error"
-            }
-            return ParsedError(msg, statusCode = statusCode)
-        }
-
+    private fun parseErrorBody(jsonStr: String, statusCode: Int): ParsedError {
         return try {
-            val json = JSONObject(errorBody)
+            val json = JSONObject(jsonStr)
 
-            // Case 1: "detail" field
+            val directError = if (json.has("error")) json.optString("error") else null
+            val directMessage = if (json.has("message")) json.optString("message") else null
+
+            var detailError: String? = null
+            var detailMessage: String? = null
+            var activeSessionId: String? = null
+            var currentState: String? = null
+            var requestedState: String? = null
+
             if (json.has("detail")) {
                 val detailObj = json.optJSONObject("detail")
                 if (detailObj != null) {
-                    val error = detailObj.optString("error", "")
-                    val message = detailObj.optString("message", "")
-                    val activeSessionId = detailObj.optString("active_session_id", "").ifEmpty { null }
-                    val currentState = detailObj.optString("current_state", "")
-                    val requested = detailObj.optString("requested", "")
-
-                    val msg = when {
-                        error == "SESSION_ACTIVE" -> "Another session is active"
-                        error == "INVALID_TRANSITION" && currentState.isNotEmpty() ->
-                            "Cannot transition session from $currentState to $requested"
-                        message.isNotEmpty() -> message
-                        error.isNotEmpty() -> error
-                        else -> "Request rejected by server"
+                    detailError = detailObj.optString("error", null)
+                    detailMessage = detailObj.optString("message", null)
+                    if (detailObj.has("active_session_id")) {
+                        activeSessionId = detailObj.optString("active_session_id")
                     }
-                    return ParsedError(msg, errorCode = error, activeSessionId = activeSessionId, statusCode = statusCode)
+                    if (detailObj.has("current_state")) {
+                        currentState = detailObj.optString("current_state")
+                    }
+                    if (detailObj.has("requested")) {
+                        requestedState = detailObj.optString("requested")
+                    }
                 } else {
-                    val detailStr = json.optString("detail", "")
-                    if (detailStr.isNotEmpty()) {
-                        return ParsedError(detailStr, statusCode = statusCode)
-                    }
+                    detailMessage = json.optString("detail")
                 }
             }
 
-            // Case 2: Top-level error / message
-            val topError = json.optString("error", "")
-            val topMessage = json.optString("message", "")
+            val finalErrorCode = directError ?: detailError
 
-            val msg = when {
-                topError == "NO_ROBOT_REGISTERED" -> "No robot registered"
-                topError == "ROBOT_NOT_AUTONOMOUS" -> "Robot is not in autonomous mode"
-                topError == "ROBOT_OFFLINE" -> "Robot is offline"
-                topError == "HOME_PROTECTED" -> "Cannot delete Home destination"
-                topError == "ACTIVE_DELIVERY" -> "Cannot modify while delivery is active"
-                topError == "RESET_FAILED" -> if (topMessage.isNotEmpty()) topMessage else "Emergency stop reset failed"
-                topMessage.isNotEmpty() -> topMessage
-                topError.isNotEmpty() -> topError
-                else -> "HTTP $statusCode error"
+            val finalMessage = when {
+                !directMessage.isNullOrBlank() -> directMessage
+                !detailMessage.isNullOrBlank() -> detailMessage
+                finalErrorCode == "EMAIL_ALREADY_EXISTS" -> "Email already exists"
+                finalErrorCode == "CANNOT_DELETE_SELF" -> "Cannot delete your own account"
+                finalErrorCode == "NO_ROBOT_REGISTERED" -> "No robot registered"
+                finalErrorCode == "RESET_FAILED" -> "Failed to reset emergency stop"
+                finalErrorCode == "SESSION_ACTIVE" -> "Session already active: ${activeSessionId ?: ""}".trim()
+                finalErrorCode == "INVALID_TRANSITION" -> "Invalid transition from ${currentState ?: "current"} to ${requestedState ?: "requested"}"
+                finalErrorCode == "ROBOT_NOT_AUTONOMOUS" -> "Robot is not in autonomous mode"
+                finalErrorCode == "ROBOT_OFFLINE" -> "Robot is offline"
+                finalErrorCode == "ROBOT_NOT_READY" -> "Robot not ready for mode change"
+                finalErrorCode == "LOCKED" -> "Robot locked because of emergency stop"
+                finalErrorCode == "MAP_NOT_FOUND" -> "Map not found"
+                finalErrorCode == "INVALID_COORDINATES" -> "Invalid coordinates"
+                finalErrorCode == "HOME_PROTECTED" -> "Home destination is protected"
+                finalErrorCode == "ACTIVE_DELIVERY" -> "Cannot modify destination during active delivery"
+                statusCode == 423 -> "Robot locked because of emergency stop"
+                statusCode == 404 -> "Resource not found"
+                statusCode == 409 -> "Resource conflict"
+                statusCode == 500 -> "Backend server error (HTTP 500). Please check backend logs on Render."
+                !finalErrorCode.isNullOrBlank() -> finalErrorCode.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() }
+                else -> "Request failed with code $statusCode"
             }
-            ParsedError(msg, errorCode = topError, statusCode = statusCode)
+
+            ParsedError(
+                message = finalMessage,
+                errorCode = finalErrorCode,
+                activeSessionId = activeSessionId,
+                statusCode = statusCode
+            )
         } catch (e: Exception) {
-            ParsedError("Server returned code $statusCode", statusCode = statusCode)
+            val fallbackMsg = if (statusCode == 500) {
+                "Backend server error (HTTP 500). Please check backend logs on Render."
+            } else if (statusCode == 404) {
+                "Endpoint not found (HTTP 404)."
+            } else if (jsonStr.isNotBlank()) {
+                jsonStr.take(120)
+            } else {
+                "Request failed with status $statusCode"
+            }
+            ParsedError(
+                message = fallbackMsg,
+                statusCode = statusCode
+            )
         }
     }
 }

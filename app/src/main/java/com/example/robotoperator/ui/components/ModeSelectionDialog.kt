@@ -9,7 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -21,28 +21,25 @@ import com.example.ui.theme.*
 @Composable
 fun ModeSelectionDialog(
     currentMode: String,
-    isRequiredReselection: Boolean = false,
-    errorMessage: String? = null,
-    isSubmitting: Boolean = false,
+    errorMessage: String?,
+    isSwitching: Boolean,
     onDismiss: () -> Unit,
-    onConfirmMode: (selectedMode: String) -> Unit
+    onConfirmMode: (targetMode: String) -> Unit
 ) {
-    var selectedMode by remember {
-        mutableStateOf(if (currentMode == "AUTONOMOUS") "MANUAL" else "AUTONOMOUS")
-    }
-    var hasAcknowledged by remember { mutableStateOf(false) }
+    var selectedMode by remember { mutableStateOf(currentMode.uppercase()) }
+    var acknowledgedMovement by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = {
-        if (!isRequiredReselection && !isSubmitting) onDismiss()
-    }) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = PureWhite,
-            border = androidx.compose.foundation.BorderStroke(1.dp, Slate300),
+    val requiresAcknowledgment = selectedMode == "AUTONOMOUS" || selectedMode == "MANUAL"
+    val canSubmit = (!requiresAcknowledgment || acknowledgedMovement) && !isSwitching
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(6.dp),
+            colors = CardDefaults.cardColors(containerColor = PureWhite),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
-                .testTag("mode_selection_dialog")
+                .border(1.dp, BorderHairline, RoundedCornerShape(6.dp))
         ) {
             Column(
                 modifier = Modifier
@@ -50,158 +47,150 @@ fun ModeSelectionDialog(
                     .padding(20.dp)
             ) {
                 Text(
-                    text = if (isRequiredReselection) "Select Control Mode (Required)" else "Change Control Mode",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Slate900,
-                    fontWeight = FontWeight.SemiBold
+                    text = "Select Control Mode",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Slate900
                 )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
                 Text(
-                    text = if (isRequiredReselection)
-                        "Emergency stop was reset. Robot safety protocol requires explicit mode selection before resuming operations."
-                    else
-                        "Switching control mode affects autonomous navigation and safety velocity limits.",
-                    fontSize = 13.sp,
-                    color = Slate600
+                    text = "Current mode: $currentMode",
+                    fontSize = 12.sp,
+                    color = Slate500,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Mode Options
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModeOptionItem(
-                        title = "MANUAL",
-                        desc = "Teleoperation or manual joystick overrides",
-                        isSelected = selectedMode == "MANUAL",
-                        onClick = { selectedMode = "MANUAL" },
-                        testTag = "mode_manual_option"
-                    )
-
-                    ModeOptionItem(
-                        title = "AUTONOMOUS",
-                        desc = "Automated waypoint navigation & mission planning",
-                        isSelected = selectedMode == "AUTONOMOUS",
-                        onClick = { selectedMode = "AUTONOMOUS" },
-                        testTag = "mode_autonomous_option"
-                    )
+                // Modes List: MANUAL, AUTONOMOUS per backend contract
+                listOf(
+                    Triple("MANUAL", "Manual remote teleoperation", Slate700),
+                    Triple("AUTONOMOUS", "Autonomous SLAM navigation & dispatch", ActionBlue)
+                ).forEach { (mode, desc, color) ->
+                    val isSelected = selectedMode == mode
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) ActionBlue else BorderHairline,
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .background(if (isSelected) ActionBlueSubtle else PureWhite)
+                            .clickable {
+                                selectedMode = mode
+                                acknowledgedMovement = false
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                selectedMode = mode
+                                acknowledgedMovement = false
+                            },
+                            colors = RadioButtonDefaults.colors(selectedColor = ActionBlue)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = mode,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (isSelected) Slate900 else color
+                            )
+                            Text(
+                                text = desc,
+                                fontSize = 12.sp,
+                                color = Slate500
+                            )
+                        }
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Acknowledgment Checkbox (Mandatory)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { hasAcknowledged = !hasAcknowledged }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = hasAcknowledged,
-                        onCheckedChange = { hasAcknowledged = it },
-                        modifier = Modifier.testTag("mode_ack_checkbox")
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "I acknowledge the physical safety perimeter is clear",
-                        fontSize = 13.sp,
-                        color = Slate800
-                    )
+                // Movement acknowledgment checkbox
+                if (requiresAcknowledgment) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { acknowledgedMovement = !acknowledgedMovement }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = acknowledgedMovement,
+                            onCheckedChange = { acknowledgedMovement = it },
+                            colors = CheckboxDefaults.colors(checkedColor = ActionBlue),
+                            modifier = Modifier.testTag("ack_movement_checkbox")
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "I acknowledge the robot will move",
+                            fontSize = 13.sp,
+                            color = Slate800,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
 
-                if (!errorMessage.isNullOrEmpty()) {
+                // Error message inline
+                if (!errorMessage.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = errorMessage,
-                        color = StatusRedText,
-                        fontSize = 12.sp,
-                        modifier = Modifier.testTag("mode_error_text")
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(StatusRedBg, RoundedCornerShape(4.dp))
+                            .border(1.dp, StatusRedBorder, RoundedCornerShape(4.dp))
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            text = errorMessage,
+                            color = StatusRed,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (!isRequiredReselection) {
-                        TextButton(
-                            onClick = onDismiss,
-                            enabled = !isSubmitting,
-                            shape = RoundedCornerShape(4.dp),
-                            modifier = Modifier.testTag("cancel_mode_button")
-                        ) {
-                            Text("Cancel", color = Slate600)
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+                    ) {
+                        Text("Cancel", color = Slate600)
                     }
-
+                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { onConfirmMode(selectedMode) },
-                        enabled = hasAcknowledged && !isSubmitting,
-                        shape = RoundedCornerShape(4.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                        modifier = Modifier.testTag("confirm_mode_button")
+                        enabled = canSubmit,
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("confirm_mode_button")
                     ) {
-                        if (isSubmitting) {
+                        if (isSwitching) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = PureWhite
+                                color = PureWhite,
+                                strokeWidth = 2.dp
                             )
                         } else {
-                            Text("Set to $selectedMode")
+                            Text("Apply Mode")
                         }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ModeOptionItem(
-    title: String,
-    desc: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    val borderColor = if (isSelected) PrimaryBlue else Slate300
-    val bgColor = if (isSelected) PrimaryBlueLight else PureWhite
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, borderColor, shape = RoundedCornerShape(6.dp))
-            .background(bgColor, shape = RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(12.dp)
-            .testTag(testTag),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(
-            selected = isSelected,
-            onClick = onClick
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Column {
-            Text(
-                text = title,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = Slate900
-            )
-            Text(
-                text = desc,
-                fontSize = 12.sp,
-                color = Slate600
-            )
         }
     }
 }

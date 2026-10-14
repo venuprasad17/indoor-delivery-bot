@@ -8,59 +8,73 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.Slate200
-import com.example.ui.theme.Slate500
-import com.example.ui.theme.Slate900
+import com.example.ui.theme.*
 
 @Composable
 fun KeyValRow(
     label: String,
-    value: String,
+    value: String?,
     modifier: Modifier = Modifier,
     isMonospace: Boolean = false,
-    valueColor: Color = Slate900,
-    trailingBadge: (@Composable () -> Unit)? = null,
-    onClick: (() -> Unit)? = null,
-    testTag: String? = null
+    valueColor: androidx.compose.ui.graphics.Color = Slate900,
+    showDivider: Boolean = true,
+    trailingContent: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null
 ) {
+    val clickModifier = if (onClick != null) {
+        Modifier.clickable(onClick = onClick)
+    } else Modifier
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .then(clickModifier)
+            .background(PureWhite)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = label,
-                color = Slate500,
-                fontSize = 14.sp
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal,
+                color = Slate600,
+                modifier = Modifier.weight(1f, fill = false)
             )
 
-            if (trailingBadge != null) {
-                trailingBadge()
-            } else {
-                Text(
-                    text = value,
-                    color = valueColor,
-                    fontSize = 14.sp,
-                    fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End
+            ) {
+                if (value != null) {
+                    Text(
+                        text = value,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default,
+                        color = valueColor
+                    )
+                }
+                if (trailingContent != null) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    trailingContent()
+                }
             }
         }
+        if (showDivider) {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = BorderHairline,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
     }
-    HorizontalDivider(
-        color = Slate200,
-        thickness = 1.dp,
-        modifier = Modifier.padding(horizontal = 16.dp)
-    )
 }
