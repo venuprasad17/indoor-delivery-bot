@@ -11,7 +11,6 @@ import okhttp3.*
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -24,29 +23,7 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
     var onAuthRevoked: (() -> Unit)? = null
 
     // In-memory cookie jar to retain httpOnly refresh_token cookie
-    private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
-
-    private val cookieJar = object : CookieJar {
-        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            val host = url.host
-            val list = cookieStore.getOrPut(host) { mutableListOf() }
-            synchronized(list) {
-                cookies.forEach { cookie ->
-                    list.removeAll { it.name == cookie.name }
-                    list.add(cookie)
-                }
-            }
-        }
-
-        override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val list = cookieStore[url.host] ?: return emptyList()
-            val now = System.currentTimeMillis()
-            synchronized(list) {
-                list.removeAll { it.expiresAt < now }
-                return list.toList()
-            }
-        }
-    }
+    private val cookieJar = ScopedCookieJar()
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BASIC
@@ -104,7 +81,7 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
     private var cachedApiService: ApiService? = null
 
     fun getService(): ApiService {
-        val baseUrl = settingsStore.serverUrl.removeSuffix("/") + "/"
+        val baseUrl = settingsStore.requireServerUrl().removeSuffix("/") + "/"
         if (cachedApiService == null || currentBaseUrl != baseUrl) {
             currentBaseUrl = baseUrl
             val retrofit = Retrofit.Builder()
@@ -129,7 +106,7 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
 
     fun clearAuth() {
         accessToken = null
-        cookieStore.clear()
+        cookieJar.clear()
     }
 
     suspend fun refreshAuth(): Boolean = withContext(Dispatchers.IO) {
@@ -153,7 +130,7 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
         }
 
         return try {
-            val refreshUrl = "${settingsStore.serverUrl.removeSuffix("/")}/auth/refresh"
+            val refreshUrl = "${settingsStore.requireServerUrl().removeSuffix("/")}/auth/refresh"
             val request = Request.Builder()
                 .url(refreshUrl)
                 .post(RequestBody.create(null, ByteArray(0)))
@@ -186,4 +163,27 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
         clearAuth()
         onAuthRevoked?.invoke()
     }
+}
+
+/** In-memory OkHttp cookie jar that applies OkHttp's host, path, Secure, and expiry rules. */
+internal class ScopedCookieJar : CookieJar {
+    private val lock = Any()
+    private val cookies = mutableListOf<Cookie>()
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) = synchronized(lock) {
+        cookies.forEach { cookie ->
+            this.cookies.removeAll {
+                it.name == cookie.name && it.domain == cookie.domain && it.path == cookie.path
+            }
+            if (cookie.matches(url) && cookie.expiresAt > System.currentTimeMillis()) this.cookies.add(cookie)
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        cookies.removeAll { it.expiresAt <= now }
+        cookies.filter { it.matches(url) }
+    }
+
+    fun clear() = synchronized(lock) { cookies.clear() }
 }

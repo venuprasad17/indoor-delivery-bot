@@ -26,15 +26,29 @@ interface ApiService {
     @GET("auth/me/robots")
     suspend fun getMyRobots(): List<RobotStatus>
 
+    // Admin robot provisioning; the raw gateway key is returned once.
+    @POST("admin/robots")
+    suspend fun createRobot(@Body body: CreateRobotRequest): ProvisionedRobot
+
     @POST("auth/logout")
     suspend fun logout(): Response<Unit>
+
+    @POST("dashboard/ws-ticket")
+    suspend fun createDashboardWebSocketTicket(): DashboardWebSocketTicket
 
     // Robot Control & Telemetry
     @GET("robot/status")
     suspend fun getRobotStatus(): RobotStatus
 
+    // Local-development ROSBridge connection; ADMIN-only on the backend.
+    @GET("admin/robot-connection")
+    suspend fun getRobotConnection(): RobotConnectionResponse
+
+    @POST("admin/robot-connection")
+    suspend fun connectRobotBridge(@Body body: RobotConnectionRequest): RobotConnectionResponse
+
     @POST("robot/mode")
-    suspend fun setRobotMode(@Body body: ModeRequest): RobotStatus
+    suspend fun setRobotMode(@Body body: ModeRequest): ModeResponse
 
     @POST("robot/emergency-stop")
     suspend fun emergencyStop(@Body body: EmergencyStopRequest = EmergencyStopRequest()): SafetyStateResponse
@@ -155,5 +169,5 @@ interface ApiService {
     ): Response<Unit>
 
     @GET("admin/users/{user_id}/robots")
-    suspend fun getUserRobots(@Path("user_id") userId: String): List<RobotStatus>
+    suspend fun getUserRobots(@Path("user_id") userId: String): List<RobotAccessGrant>
 }

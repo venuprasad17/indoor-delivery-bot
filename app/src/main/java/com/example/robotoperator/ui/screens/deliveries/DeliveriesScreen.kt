@@ -25,6 +25,7 @@ import com.example.robotoperator.data.api.ApiErrorParser
 import com.example.robotoperator.data.model.CreateDeliveryRequest
 import com.example.robotoperator.data.model.Delivery
 import com.example.robotoperator.data.model.Destination
+import com.example.robotoperator.data.model.isAdministratorRole
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.AuthManager
 import com.example.robotoperator.state.RobotStateHolder
@@ -51,6 +52,7 @@ fun DeliveriesScreen(
 
     val robotStatus by stateHolder.robotStatus.collectAsState()
     val currentUser by authManager.currentUser.collectAsState()
+    val isAdmin = isAdministratorRole(currentUser?.role)
     val scope = rememberCoroutineScope()
 
     fun loadData() {
@@ -60,14 +62,16 @@ fun DeliveriesScreen(
             try {
                 val service = apiClient.getService()
                 // Role-based list: ADMIN gets full deliveries list; USER gets only their own deliveries
-                deliveries = if (currentUser?.role == "ADMIN") {
+                deliveries = if (isAdmin) {
                     service.getDeliveries()
                 } else {
                     service.getMyDeliveries()
                 }
-                destinations = service.getDestinations()
-                if (destinations.isNotEmpty() && selectedDestinationId == null) {
-                    selectedDestinationId = destinations.first().id
+                if (isAdmin) {
+                    destinations = service.getDestinations()
+                    if (destinations.isNotEmpty() && selectedDestinationId == null) {
+                        selectedDestinationId = destinations.first().id
+                    }
                 }
             } catch (t: Throwable) {
                 errorMessage = ApiErrorParser.parse(t).message
@@ -77,13 +81,13 @@ fun DeliveriesScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentUser?.role) {
         loadData()
     }
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(
+            if (isAdmin) FloatingActionButton(
                 onClick = {
                     if (destinations.isEmpty()) {
                         scope.launch {
@@ -131,7 +135,7 @@ fun DeliveriesScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "DELIVERY DISPATCH",
+                    text = if (isAdmin) "DELIVERY DISPATCH" else "MY DELIVERIES",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
@@ -245,7 +249,7 @@ fun DeliveriesScreen(
             }
         }
 
-        if (showCreateDialog) {
+        if (showCreateDialog && isAdmin) {
             AlertDialog(
                 onDismissRequest = { showCreateDialog = false },
                 title = { Text("Dispatch New Delivery") },

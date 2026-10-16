@@ -24,6 +24,7 @@ import com.example.robotoperator.data.model.SystemEvent
 import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -227,9 +228,9 @@ private fun EventItemCard(event: SystemEvent) {
                 color = Slate900
             )
 
-            if (!event.payload_json.isNullOrBlank()) {
+            if (event.payload_json.isNotEmpty()) {
                 Text(
-                    text = event.payload_json,
+                    text = JSONObject(event.payload_json).toString(2),
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     color = Slate700

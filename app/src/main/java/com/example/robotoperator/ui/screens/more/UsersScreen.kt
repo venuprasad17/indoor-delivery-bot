@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,7 +19,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -26,8 +29,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
+import com.example.robotoperator.data.model.CreateRobotRequest
 import com.example.robotoperator.data.model.CreateUserRequest
+import com.example.robotoperator.data.model.ProvisionedRobot
+import com.example.robotoperator.data.model.RobotAccessGrant
 import com.example.robotoperator.data.model.RobotStatus
+import com.example.robotoperator.data.model.toRevocationPath
 import com.example.robotoperator.data.model.UpdateUserRequest
 import com.example.robotoperator.data.model.User
 import com.example.robotoperator.ui.components.StatusBadge
@@ -42,8 +49,14 @@ fun UsersScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
     var users by remember { mutableStateOf<List<User>>(emptyList()) }
+    var robots by remember { mutableStateOf<List<RobotStatus>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showCreateRobotDialog by remember { mutableStateOf(false) }
+    var newRobotName by remember { mutableStateOf("") }
+    var isCreatingRobot by remember { mutableStateOf(false) }
+    var provisionedRobot by remember { mutableStateOf<ProvisionedRobot?>(null) }
+    val clipboardManager = LocalClipboardManager.current
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var newEmail by remember { mutableStateOf("") }
@@ -61,6 +74,7 @@ fun UsersScreen(
             try {
                 val service = apiClient.getService()
                 users = service.getUsers()
+                robots = service.getMyRobots()
             } catch (e: Exception) {
                 errorMessage = ApiErrorParser.parseErrorMessage(e)
             } finally {
@@ -95,6 +109,18 @@ fun UsersScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            newRobotName = ""
+                            showCreateRobotDialog = true
+                        },
+                        modifier = Modifier.testTag("add_robot_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add robot"
+                        )
+                    }
                     IconButton(
                         onClick = { loadUsers() },
                         modifier = Modifier.testTag("users_refresh_button")
@@ -156,7 +182,47 @@ fun UsersScreen(
                 }
             }
 
-            if (isLoading && users.isEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .testTag("robot_inventory_card"),
+                shape = RoundedCornerShape(6.dp),
+                colors = CardDefaults.cardColors(containerColor = PureWhite)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(14.dp)
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        "ROBOT INVENTORY",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = Slate500
+                    )
+                    Text(
+                        "Provisioned robot records. Current connection and telemetry are shown on Dashboard.",
+                        fontSize = 11.sp,
+                        color = Slate500
+                    )
+                    if (robots.isEmpty()) {
+                        Text("No robots provisioned yet.", fontSize = 13.sp, color = Slate600)
+                    } else {
+                        robots.forEach { robot ->
+                            Column(modifier = Modifier.padding(top = 4.dp)) {
+                                Text(robot.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Slate900)
+                                Text("ID: " + robot.id, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Slate600)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isLoading && users.isEmpty() && robots.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
@@ -261,6 +327,91 @@ fun UsersScreen(
             }
         }
 
+        if (showCreateRobotDialog) {
+            AlertDialog(
+                onDismissRequest = { if (!isCreatingRobot) showCreateRobotDialog = false },
+                title = { Text("Add Robot") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Creates an offline robot record and a gateway key shown once.")
+                        OutlinedTextField(
+                            value = newRobotName,
+                            onValueChange = { newRobotName = it },
+                            label = { Text("Robot name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        enabled = newRobotName.isNotBlank() && !isCreatingRobot,
+                        onClick = {
+                            coroutineScope.launch {
+                                isCreatingRobot = true
+                                errorMessage = null
+                                try {
+                                    provisionedRobot = apiClient.getService().createRobot(
+                                        CreateRobotRequest(name = newRobotName.trim())
+                                    )
+                                    showCreateRobotDialog = false
+                                    loadUsers()
+                                } catch (e: Exception) {
+                                    errorMessage = ApiErrorParser.parseErrorMessage(e)
+                                } finally {
+                                    isCreatingRobot = false
+                                }
+                            }
+                        }
+                    ) {
+                        if (isCreatingRobot) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                        else Text("Create robot")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        enabled = !isCreatingRobot,
+                        onClick = { showCreateRobotDialog = false }
+                    ) { Text("Cancel") }
+                }
+            )
+        }
+
+        provisionedRobot?.let { robot ->
+            AlertDialog(
+                onDismissRequest = { provisionedRobot = null },
+                title = { Text("Save robot gateway key now") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(robot.name + " was created offline. The raw key cannot be retrieved again.")
+                        Text("Robot ID: " + robot.id, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        SelectionContainer {
+                            Text(robot.api_key, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        }
+                        Text(
+                            "Copy this key directly into the authorized gateway's protected secret configuration. Do not share it in chat or logs.",
+                            fontSize = 12.sp,
+                            color = Slate600
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(robot.api_key))
+                        },
+                        modifier = Modifier.testTag("copy_robot_key_button")
+                    ) { Text("Copy key") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { provisionedRobot = null },
+                        modifier = Modifier.testTag("dismiss_robot_key_button")
+                    ) { Text("Done") }
+                }
+            )
+        }
+
         // Create User Dialog (Direct Admin Provisioning)
         if (showCreateDialog) {
             AlertDialog(
@@ -360,7 +511,7 @@ fun UserDetailDialog(
     onUserUpdated: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
-    var grantedRobots by remember { mutableStateOf<List<RobotStatus>>(emptyList()) }
+    var grantedRobots by remember { mutableStateOf<List<RobotAccessGrant>>(emptyList()) }
     var isLoadingRobots by remember { mutableStateOf(true) }
     var detailError by remember { mutableStateOf<String?>(null) }
     var robotIdToGrant by remember { mutableStateOf("") }
@@ -557,13 +708,13 @@ fun UserDetailDialog(
                             ) {
                                 Column {
                                     Text(
-                                        text = robot.name.ifBlank { "Robot ${robot.id.take(8)}" },
+                                        text = "Robot ${robot.robot_id.take(8)}",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = Slate900
                                     )
                                     Text(
-                                        text = "ID: ${robot.id}",
+                                        text = "ID: ${robot.robot_id} · granted ${robot.granted_at.take(10)}",
                                         fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         color = Slate600
@@ -575,7 +726,8 @@ fun UserDetailDialog(
                                             isOperating = true
                                             detailError = null
                                             try {
-                                                apiClient.getService().revokeRobotAccess(user.id, robot.id)
+                                                val path = robot.toRevocationPath()
+                                                apiClient.getService().revokeRobotAccess(path.userId, path.robotId)
                                                 loadUserRobots()
                                             } catch (e: Exception) {
                                                 detailError = ApiErrorParser.parseErrorMessage(e)

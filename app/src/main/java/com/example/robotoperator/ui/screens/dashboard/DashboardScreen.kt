@@ -20,6 +20,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
+import com.example.robotoperator.data.model.normalizedConnectionState
+import com.example.robotoperator.data.model.safetyTelemetryContext
+import com.example.robotoperator.data.model.safetyTelemetryLabel
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.RobotStateHolder
 import com.example.robotoperator.ui.components.KeyValRow
@@ -33,6 +36,7 @@ fun DashboardScreen(
     stateHolder: RobotStateHolder,
     apiClient: ApiClient,
     settingsStore: ServerSettingsStore,
+    canAdministerRobot: Boolean,
     onOpenModeDialog: () -> Unit
 ) {
     val robotStatus by stateHolder.robotStatus.collectAsState()
@@ -218,7 +222,7 @@ fun DashboardScreen(
                     label = "System State",
                     value = null,
                     trailingContent = {
-                        StatusBadge(status = robotStatus.status)
+                        StatusBadge(status = normalizedConnectionState(robotStatus.connection_state))
                     }
                 )
                 KeyValRow(
@@ -240,21 +244,24 @@ fun DashboardScreen(
                                 color = ActionBlue
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Change",
-                                fontSize = 11.sp,
-                                color = ActionBlue
-                            )
+                            if (canAdministerRobot) {
+                                Text(
+                                    text = "Change",
+                                    fontSize = 11.sp,
+                                    color = ActionBlue
+                                )
+                            }
                         }
                     },
-                    onClick = onOpenModeDialog
+                    onClick = onOpenModeDialog.takeIf { canAdministerRobot }
                 )
                 KeyValRow(
                     label = "Safety State",
-                    value = null,
-                    trailingContent = {
-                        StatusBadge(status = robotStatus.safety_state)
-                    }
+                    value = safetyTelemetryLabel(robotStatus.safety_state)
+                )
+                KeyValRow(
+                    label = "Safety Telemetry Context",
+                    value = safetyTelemetryContext(robotStatus.connection_state, isLiveConnected)
                 )
                 KeyValRow(
                     label = "SLAM State",
@@ -275,7 +282,7 @@ fun DashboardScreen(
                     }
                 )
                 KeyValRow(
-                    label = "Last Seen",
+                    label = "Last Telemetry Seen",
                     value = robotStatus.last_seen ?: "Never",
                     isMonospace = true
                 )

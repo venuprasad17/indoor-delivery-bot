@@ -51,8 +51,17 @@ fun OperatorAppRoot(settingsStore: ServerSettingsStore) {
 
     val isAuthenticated by authManager.isAuthenticated.collectAsState()
     var showServerSettingsOnAuth by remember { mutableStateOf(false) }
+    var endpointConfigured by remember(settingsStore) { mutableStateOf(settingsStore.isConfigured) }
 
-    if (isAuthenticated) {
+    if (!endpointConfigured) {
+        ServerSettingsScreen(
+            settingsStore = settingsStore,
+            apiClient = apiClient,
+            canNavigateBack = false,
+            onNavigateBack = {},
+            onSaved = { endpointConfigured = settingsStore.isConfigured }
+        )
+    } else if (isAuthenticated) {
         MainScaffold(
             settingsStore = settingsStore,
             apiClient = apiClient,
@@ -72,7 +81,10 @@ fun OperatorAppRoot(settingsStore: ServerSettingsStore) {
                 apiClient = apiClient,
                 canNavigateBack = true,
                 onNavigateBack = { showServerSettingsOnAuth = false },
-                onSaved = { showServerSettingsOnAuth = false }
+                onSaved = {
+                    endpointConfigured = settingsStore.isConfigured
+                    showServerSettingsOnAuth = false
+                }
             )
         } else {
             LoginScreen(

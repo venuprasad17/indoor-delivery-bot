@@ -25,7 +25,7 @@ fun StatusBadge(
         "ONLINE", "OK", "TRACKING", "SAFE", "COMPLETED", "ACTIVE" ->
             Triple(StatusGreenBg, StatusGreen, StatusGreenBorder)
 
-        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING" ->
+        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING", "STALE" ->
             Triple(StatusAmberBg, StatusAmber, StatusAmberBorder)
 
         "EMERGENCY_STOP", "STOP", "LOST", "FAULT", "CANCELLED", "FAILED", "ERROR", "CRITICAL" ->

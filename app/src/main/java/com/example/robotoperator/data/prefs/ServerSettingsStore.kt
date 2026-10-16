@@ -3,6 +3,7 @@ package com.example.robotoperator.data.prefs
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.BuildConfig
+import com.example.robotoperator.data.api.dashboardWebSocketUrl
 
 class ServerSettingsStore(context: Context) {
 
@@ -10,70 +11,53 @@ class ServerSettingsStore(context: Context) {
         context.getSharedPreferences("robot_operator_settings", Context.MODE_PRIVATE)
 
     companion object {
-        const val LIVE_RENDER_BACKEND = "https://indoor-delivery-bot.onrender.com"
-        private const val KEY_SERVER_URL = "server_url"
+        private const val KEY_SELECTED_ENVIRONMENT = "selected_backend_environment"
         private const val KEY_CACHED_ROBOT_ID = "cached_robot_id"
         private const val KEY_ACTIVE_SESSION_ID = "active_session_id"
     }
 
-    // Always prefer the live backend unless BuildConfig explicitly specifies an external non-localhost URL
-    private val defaultBackendUrl: String =
-        if (BuildConfig.BACKEND_URL.isNotBlank() &&
-            !BuildConfig.BACKEND_URL.contains("localhost") &&
-            !BuildConfig.BACKEND_URL.contains("10.0.2.2") &&
-            !BuildConfig.BACKEND_URL.contains("127.0.0.1")
-        ) {
-            sanitizeUrl(BuildConfig.BACKEND_URL)
-        } else {
-            LIVE_RENDER_BACKEND
-        }
+    private fun environmentKey(environment: BackendEnvironment) = "backend_url_${environment.name.lowercase()}"
 
-    init {
-        // One-time startup migration: if the saved URL points to localhost or emulator loopback,
-        // immediately overwrite it with the live Render backend URL.
-        val existing = prefs.getString(KEY_SERVER_URL, null)
-        if (existing == null ||
-            existing.contains("localhost") ||
-            existing.contains("10.0.2.2") ||
-            existing.contains("127.0.0.1")
-        ) {
-            prefs.edit().putString(KEY_SERVER_URL, LIVE_RENDER_BACKEND).apply()
-        }
+    private fun buildConfiguredEndpoint(environment: BackendEnvironment): String = when (environment) {
+        BackendEnvironment.DEVELOPMENT -> BuildConfig.DEVELOPMENT_BACKEND_URL
+        BackendEnvironment.STAGING -> BuildConfig.STAGING_BACKEND_URL
+        BackendEnvironment.PRODUCTION -> BuildConfig.PRODUCTION_BACKEND_URL
     }
 
-    var serverUrl: String
-        get() {
-            val stored = prefs.getString(KEY_SERVER_URL, null)?.trim()
-            if (stored.isNullOrBlank() ||
-                stored.contains("localhost") ||
-                stored.contains("10.0.2.2") ||
-                stored.contains("127.0.0.1")
-            ) {
-                prefs.edit().putString(KEY_SERVER_URL, defaultBackendUrl).apply()
-                return defaultBackendUrl
-            }
-            return sanitizeUrl(stored)
-        }
-        set(value) {
-            val sanitized = sanitizeUrl(value)
-            prefs.edit().putString(KEY_SERVER_URL, sanitized).apply()
-        }
+    val selectedEnvironment: BackendEnvironment?
+        get() = prefs.getString(KEY_SELECTED_ENVIRONMENT, null)
+            ?.let { name -> BackendEnvironment.entries.firstOrNull { it.name == name } }
 
-    fun sanitizeUrl(raw: String): String {
-        var trimmed = raw.trim().removeSuffix("/")
-        if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
-            trimmed = if (trimmed.startsWith("localhost") || trimmed.startsWith("10.0.2.2") || trimmed.startsWith("127.0.0.1")) {
-                "http://$trimmed"
-            } else {
-                "https://$trimmed"
-            }
-        }
-        return trimmed
+    val isConfigured: Boolean
+        get() = selectedEnvironment?.let { endpointFor(it) != null } ?: false
+
+    /** Empty until an environment has been explicitly selected and configured. */
+    val serverUrl: String
+        get() = selectedEnvironment?.let(::endpointFor).orEmpty()
+
+    fun endpointFor(environment: BackendEnvironment): String? {
+        val raw = prefs.getString(environmentKey(environment), null)
+            ?: buildConfiguredEndpoint(environment).takeIf { it.isNotBlank() }
+            ?: return null
+        return runCatching { validateBackendEndpoint(raw, environment) }.getOrNull()
     }
 
-    fun resetToLiveBackend() {
-        prefs.edit().putString(KEY_SERVER_URL, LIVE_RENDER_BACKEND).apply()
+    fun validateEndpoint(raw: String, environment: BackendEnvironment): String =
+        validateBackendEndpoint(raw, environment)
+
+    fun saveEndpoint(environment: BackendEnvironment, raw: String) {
+        val normalized = validateBackendEndpoint(raw, environment)
+        prefs.edit()
+            .putString(environmentKey(environment), normalized)
+            .putString(KEY_SELECTED_ENVIRONMENT, environment.name)
+            .apply()
     }
+
+    fun requireSelectedEnvironment(): BackendEnvironment = selectedEnvironment
+        ?: throw IllegalStateException("Select and configure a backend environment before connecting.")
+
+    fun requireServerUrl(): String = selectedEnvironment?.let(::endpointFor)
+        ?: throw IllegalStateException("Select and configure a backend environment before connecting.")
 
     var cachedRobotId: String?
         get() = prefs.getString(KEY_CACHED_ROBOT_ID, null)
@@ -83,17 +67,9 @@ class ServerSettingsStore(context: Context) {
         get() = prefs.getString(KEY_ACTIVE_SESSION_ID, null)
         set(value) = prefs.edit().putString(KEY_ACTIVE_SESSION_ID, value).apply()
 
-    fun getWebSocketUrl(token: String?): String {
-        val base = serverUrl
-        val wsBase = when {
-            base.startsWith("https://", ignoreCase = true) -> base.replaceFirst("https://", "wss://", ignoreCase = true)
-            base.startsWith("http://", ignoreCase = true) -> base.replaceFirst("http://", "ws://", ignoreCase = true)
-            else -> "wss://$base"
-        }
-        return if (!token.isNullOrBlank()) {
-            "$wsBase/ws/dashboard?token=$token"
-        } else {
-            "$wsBase/ws/dashboard"
-        }
-    }
+    fun getWebSocketUrl(ticket: String): String = dashboardWebSocketUrl(
+        requireServerUrl(),
+        ticket,
+        requireSelectedEnvironment()
+    )
 }

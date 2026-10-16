@@ -29,15 +29,29 @@ class RobotStateHolder {
     val needsModeReselection: StateFlow<Boolean> = _needsModeReselection.asStateFlow()
 
     fun updateRobotStatus(status: RobotStatus) {
-        _robotStatus.value = status
+        val current = _robotStatus.value
+        _robotStatus.value = status.copy(
+            physical_execution_confirmed = status.physical_execution_confirmed
+                ?: current.physical_execution_confirmed.takeIf { current.safety_state == status.safety_state }
+        )
     }
 
     fun updateControlMode(mode: String) {
         _robotStatus.update { it.copy(control_mode = mode) }
     }
 
-    fun updateSafetyState(safetyState: String) {
-        _robotStatus.update { it.copy(safety_state = safetyState) }
+    fun updateSafetyState(
+        safetyState: String?,
+        reportedAt: String? = null,
+        physicalExecutionConfirmed: Boolean? = null
+    ) {
+        _robotStatus.update {
+            it.copy(
+                safety_state = safetyState?.takeIf { value -> value.isNotBlank() } ?: it.safety_state,
+                safety_state_reported_at = if (safetyState.isNullOrBlank()) it.safety_state_reported_at else reportedAt,
+                physical_execution_confirmed = physicalExecutionConfirmed
+            )
+        }
     }
 
     fun setNeedsModeReselection(needed: Boolean) {
@@ -48,7 +62,26 @@ class RobotStateHolder {
         _robotStatus.update {
             it.copy(
                 status = if (isOnline) "ONLINE" else "OFFLINE",
+                connection_state = if (isOnline) "ONLINE" else "OFFLINE",
                 last_seen = lastSeen ?: it.last_seen
+            )
+        }
+    }
+
+    fun updateConnectionState(
+        connectionState: String,
+        lastSeen: String? = null,
+        clearLastSeen: Boolean = false
+    ) {
+        _robotStatus.update {
+            it.copy(
+                connection_state = connectionState,
+                status = when (connectionState.uppercase()) {
+                    "ONLINE" -> "ONLINE"
+                    "OFFLINE" -> "OFFLINE"
+                    else -> it.status
+                },
+                last_seen = if (clearLastSeen) null else lastSeen ?: it.last_seen
             )
         }
     }
@@ -67,6 +100,17 @@ class RobotStateHolder {
 
     fun setLiveConnected(connected: Boolean) {
         _isLiveConnected.value = connected
+        if (!connected) {
+            // Losing the dashboard feed invalidates the last client-side observation. This does
+            // not mean the physical robot is offline; wait for a new backend snapshot/event.
+            _robotStatus.update { status ->
+                if (status.connection_state.equals("UNKNOWN", ignoreCase = true)) {
+                    status
+                } else {
+                    status.copy(connection_state = "STALE")
+                }
+            }
+        }
     }
 
     fun setEmergencyStopError(message: String?) {

@@ -10,13 +10,17 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.*
 import okhttp3.*
 import org.json.JSONObject
+import retrofit2.HttpException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class DashboardWebSocketClient(
     private val settingsStore: ServerSettingsStore,
     private val apiClient: ApiClient,
-    private val stateHolder: RobotStateHolder
+    private val stateHolder: RobotStateHolder,
+    private val ticketProvider: suspend () -> String = {
+        apiClient.getService().createDashboardWebSocketTicket().ticket
+    }
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(15, TimeUnit.SECONDS)
@@ -30,20 +34,24 @@ class DashboardWebSocketClient(
     private var webSocket: WebSocket? = null
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var reconnectJob: Job? = null
-    private var currentBackoffMs = 1000L
+    private var stableConnectionJob: Job? = null
+    private val reconnectBackoff = ReconnectBackoff()
     private val isStarted = AtomicBoolean(false)
 
     var onAdminForbidden: (() -> Unit)? = null
+    var onAuthenticationRequired: ((String) -> Unit)? = null
 
     fun start() {
         isStarted.set(true)
-        currentBackoffMs = 1000L
+        reconnectBackoff.reset()
         connect()
     }
 
     fun stop() {
         isStarted.set(false)
         reconnectJob?.cancel()
+        stableConnectionJob?.cancel()
+        reconnectBackoff.reset()
         webSocket?.close(1000, "App backgrounded")
         webSocket = null
         stateHolder.setLiveConnected(false)
@@ -52,7 +60,8 @@ class DashboardWebSocketClient(
     fun reconnect() {
         if (!isStarted.get()) return
         reconnectJob?.cancel()
-        currentBackoffMs = 1000L
+        stableConnectionJob?.cancel()
+        reconnectBackoff.reset()
         webSocket?.close(1000, "Forced reconnect")
         webSocket = null
         connect()
@@ -60,17 +69,40 @@ class DashboardWebSocketClient(
 
     private fun connect() {
         if (!isStarted.get()) return
-        val token = apiClient.getAccessToken()
-        val wsUrl = settingsStore.getWebSocketUrl(token)
+        reconnectJob = coroutineScope.launch {
+            val request = try {
+                Request.Builder()
+                    .url(
+                        dashboardConnectionUrl(
+                            settingsStore.requireServerUrl(),
+                            settingsStore.requireSelectedEnvironment(),
+                            ticketProvider
+                        )
+                    )
+                    .build()
+            } catch (error: Exception) {
+                if (error is HttpException && error.code() in listOf(401, 403)) {
+                    if (error.code() == 403) {
+                        isStarted.set(false)
+                        onAdminForbidden?.invoke()
+                    } else {
+                        stopForAuthentication("Your session could not be refreshed. Please sign in again.")
+                    }
+                } else {
+                    scheduleReconnect()
+                }
+                return@launch
+            }
+            if (!isStarted.get()) return@launch
 
-        val request = Request.Builder()
-            .url(wsUrl)
-            .build()
-
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 stateHolder.setLiveConnected(true)
-                currentBackoffMs = 1000L
+                stableConnectionJob?.cancel()
+                stableConnectionJob = coroutineScope.launch {
+                    delay(30_000L)
+                    reconnectBackoff.reset()
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -78,60 +110,73 @@ class DashboardWebSocketClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                stableConnectionJob?.cancel()
                 stateHolder.setLiveConnected(false)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                stableConnectionJob?.cancel()
                 stateHolder.setLiveConnected(false)
                 handleDisconnection(code)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                stableConnectionJob?.cancel()
                 stateHolder.setLiveConnected(false)
                 val code = response?.code ?: 0
-                if (code == 403) {
-                    onAdminForbidden?.invoke()
+                if (code == 401 || code == 403) {
+                    if (code == 403) {
+                        isStarted.set(false)
+                        onAdminForbidden?.invoke()
+                    } else {
+                        stopForAuthentication("Your session is no longer valid. Please sign in again.")
+                    }
                     return
                 }
                 scheduleReconnect()
             }
-        })
+            })
+        }
     }
 
     private fun handleDisconnection(code: Int) {
-        when (code) {
-            4001 -> {
-                // Invalid or expired token: refresh and reconnect
-                coroutineScope.launch {
-                    val refreshed = apiClient.refreshAuth()
-                    if (refreshed) {
-                        currentBackoffMs = 1000L
-                        connect()
-                    } else {
-                        scheduleReconnect()
-                    }
-                }
-            }
-            4003 -> {
-                // Not an admin: stop reconnecting and notify to log out
-                isStarted.set(false)
-                reconnectJob?.cancel()
-                onAdminForbidden?.invoke()
-            }
-            else -> {
+        when (dashboardDisconnectAction(code)) {
+            DashboardDisconnectAction.RETRY_WITH_NEW_TICKET -> {
+                // Expired tickets and transient closes reconnect through connect(), which obtains
+                // a fresh one-use ticket; authenticated HTTP handles access-token refresh.
                 scheduleReconnect()
+            }
+            DashboardDisconnectAction.REQUIRE_AUTHENTICATION -> {
+                // A fresh one-use ticket was rejected: the session or dashboard grant is invalid.
+                stopForAuthentication("Dashboard access was revoked or your session ended. Please sign in again.")
             }
         }
     }
 
     private fun scheduleReconnect() {
         if (!isStarted.get()) return
+        val delayMs = reconnectBackoff.nextDelayMs()
+        if (delayMs == null) {
+            isStarted.set(false)
+            webSocket?.cancel()
+            webSocket = null
+            stateHolder.setLiveConnected(false)
+            return
+        }
         reconnectJob?.cancel()
         reconnectJob = coroutineScope.launch {
-            delay(currentBackoffMs)
-            currentBackoffMs = (currentBackoffMs * 2).coerceAtMost(16000L)
+            delay(delayMs)
             connect()
         }
+    }
+
+    private fun stopForAuthentication(message: String) {
+        isStarted.set(false)
+        reconnectJob?.cancel()
+        webSocket?.cancel()
+        webSocket = null
+        stateHolder.setLiveConnected(false)
+        onAuthenticationRequired?.invoke(message)
     }
 
     private fun handleMessage(jsonStr: String) {
@@ -154,17 +199,27 @@ class DashboardWebSocketClient(
                 "robot.online" -> {
                     val status = robotStatusAdapter.fromJson(payloadStr)
                     if (status != null) {
-                        stateHolder.updateRobotStatus(status)
+                        stateHolder.updateRobotStatus(status.copy(connection_state = "ONLINE"))
                         if (status.id.isNotBlank()) {
                             settingsStore.cachedRobotId = status.id
                         }
                     } else {
-                        stateHolder.updateOnline(true)
+                        stateHolder.updateConnectionState("ONLINE")
+                    }
+                }
+                "robot.freshness" -> {
+                    val connectionState = payloadObj?.optString("connection_state")
+                    if (!connectionState.isNullOrBlank()) {
+                        stateHolder.updateConnectionState(
+                            connectionState,
+                            payloadObj.optString("last_seen").takeIf { it.isNotBlank() && it != "null" },
+                            clearLastSeen = payloadObj.has("last_seen") && payloadObj.isNull("last_seen")
+                        )
                     }
                 }
                 "robot.offline" -> {
-                    val lastSeen = payloadObj?.optString("last_seen", null)
-                    stateHolder.updateOnline(false, lastSeen)
+                    val lastSeen = payloadObj?.optString("last_seen")?.takeIf { it.isNotBlank() && it != "null" }
+                    stateHolder.updateConnectionState("OFFLINE", lastSeen)
                 }
                 "robot.mode_change" -> {
                     val mode = payloadObj?.optString("mode")
@@ -181,11 +236,24 @@ class DashboardWebSocketClient(
                 "robot.safety_update" -> {
                     val safety = payloadObj?.optString("safety_state")
                     if (!safety.isNullOrBlank()) {
-                        stateHolder.updateSafetyState(safety)
+                        stateHolder.updateSafetyState(safety, payloadObj.optString("timestamp").takeIf { it.isNotBlank() && it != "null" })
+                    }
+                }
+                "robot.telemetry" -> {
+                    val safety = payloadObj?.optString("safety_state")
+                    if (!safety.isNullOrBlank()) {
+                        stateHolder.updateSafetyState(
+                            safety,
+                            payloadObj.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+                        )
+                    }
+                    val connectionState = payloadObj?.optString("connection_state")
+                    if (!connectionState.isNullOrBlank()) {
+                        stateHolder.updateConnectionState(connectionState)
                     }
                 }
                 "robot.emergency_stop" -> {
-                    stateHolder.updateSafetyState("EMERGENCY_STOP")
+                    stateHolder.updateSafetyState("EMERGENCY_STOP", payloadObj?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" })
                     val reason = payloadObj?.optString("reason")
                     stateHolder.setEmergencyStopError(reason ?: "Emergency stop triggered")
                 }

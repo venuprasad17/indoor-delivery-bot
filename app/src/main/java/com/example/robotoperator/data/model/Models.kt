@@ -35,6 +35,12 @@ data class RefreshResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class DashboardWebSocketTicket(
+    val ticket: String,
+    val expires_in: Int
+)
+
+@JsonClass(generateAdapter = true)
 data class User(
     val id: String,
     val email: String,
@@ -57,6 +63,19 @@ data class UpdateUserRequest(
     val is_active: Boolean? = null
 )
 
+// Admin robot provisioning
+@JsonClass(generateAdapter = true)
+data class CreateRobotRequest(val name: String)
+
+@JsonClass(generateAdapter = true)
+data class ProvisionedRobot(
+    val id: String,
+    val name: String,
+    val api_key: String,
+    val status: String,
+    val created_at: String
+)
+
 // Robot Status & Mode
 @JsonClass(generateAdapter = true)
 data class RobotStatus(
@@ -64,11 +83,28 @@ data class RobotStatus(
     val name: String = "",
     val status: String = "OFFLINE", // "ONLINE" | "OFFLINE"
     val control_mode: String = "MANUAL", // "MANUAL" | "AUTONOMOUS" | "STOPPED"
-    val safety_state: String = "SAFE", // "SAFE" | "SLOW" | "REPLAN" | "EMERGENCY_STOP"
+    val safety_state: String? = null, // Last reported telemetry; absence is unknown.
+    val safety_state_reported_at: String? = null,
+    val physical_execution_confirmed: Boolean? = null,
+    val connection_state: String = "UNKNOWN", // ONLINE | STALE | OFFLINE | UNKNOWN
     val slam_state: String = "IDLE", // "TRACKING" | "LOST" | "RELOCATING" | "IDLE"
     val battery_level: Float? = null,
     val last_seen: String? = null,
     val firmware_version: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class RobotConnectionRequest(
+    val robot_ip: String,
+    val port: Int
+)
+
+@JsonClass(generateAdapter = true)
+data class RobotConnectionResponse(
+    val enabled: Boolean,
+    val state: String,
+    val robot_ip: String? = null,
+    val port: Int? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -86,6 +122,12 @@ data class ModeRequest(
 )
 
 @JsonClass(generateAdapter = true)
+data class ModeResponse(
+    val mode: String,
+    val safety_state: String
+)
+
+@JsonClass(generateAdapter = true)
 data class EmergencyStopRequest(
     val reason: String = "Operator initiated emergency stop"
 )
@@ -93,8 +135,9 @@ data class EmergencyStopRequest(
 @JsonClass(generateAdapter = true)
 data class SafetyStateResponse(
     val control_mode: String = "MANUAL",
-    val safety_state: String = "SAFE",
-    val needs_mode_reselection: Boolean = false
+    val safety_state: String? = null,
+    val needs_mode_reselection: Boolean = false,
+    val physical_execution_confirmed: Boolean? = null
 )
 
 // Mapping Sessions
@@ -167,9 +210,11 @@ data class NavigateRequest(
 // Deliveries
 @JsonClass(generateAdapter = true)
 data class DeliveryHistoryItem(
-    val status: String? = null,
+    val from: String? = null,
+    val to: String? = null,
     val timestamp: String? = null,
-    val note: String? = null
+    val actor_id: String? = null,
+    val reason: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -183,7 +228,9 @@ data class Delivery(
     val created_at: String? = null,
     val started_at: String? = null,
     val completed_at: String? = null,
-    val priority: String? = null
+    val priority: String? = null,
+    val physical_execution_confirmed: Boolean? = null,
+    val cancellation_requested: Boolean? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -198,7 +245,7 @@ data class SystemEvent(
     val id: String,
     val type: String = "",
     val severity: String = "INFO",
-    val payload_json: String? = null,
+    val payload_json: Map<String, Any?> = emptyMap(),
     val robot_id: String? = null,
     val user_id: String? = null,
     val created_at: String? = null
@@ -210,4 +257,12 @@ data class EventsResponse(
     val total: Int = 0,
     val page: Int = 1,
     val page_size: Int = 50
+)
+
+@JsonClass(generateAdapter = true)
+data class RobotAccessGrant(
+    val user_id: String,
+    val robot_id: String,
+    val granted_by: String,
+    val granted_at: String
 )

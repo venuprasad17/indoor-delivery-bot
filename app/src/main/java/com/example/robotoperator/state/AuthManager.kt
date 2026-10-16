@@ -101,15 +101,16 @@ class AuthManager(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun logout() {
-        try {
-            apiClient.getService().logout()
-        } catch (_: Exception) {
-            // Ignore error on server logout
-        } finally {
-            logoutLocal(null)
-        }
-    }
+    suspend fun logout(): Boolean = confirmServerLogout(
+        revokeServer = {
+            try {
+                apiClient.getService().logout().isSuccessful
+            } catch (_: Exception) {
+                false
+            }
+        },
+        clearLocal = ::logoutLocal
+    )
 
     fun logoutLocal(message: String?) {
         apiClient.clearAuth()
@@ -122,4 +123,16 @@ class AuthManager(private val apiClient: ApiClient) {
     fun clearError() {
         _authError.value = null
     }
+}
+
+internal suspend fun confirmServerLogout(
+    revokeServer: suspend () -> Boolean,
+    clearLocal: (String?) -> Unit
+): Boolean {
+    val confirmed = try { revokeServer() } catch (_: Exception) { false }
+    clearLocal(
+        if (confirmed) null else
+            "Signed out on this device, but server session revocation could not be confirmed."
+    )
+    return confirmed
 }
