@@ -16,6 +16,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,16 +58,18 @@ fun UsersScreen(
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showCreateRobotDialog by remember { mutableStateOf(false) }
-    var newRobotName by remember { mutableStateOf("") }
+    var newRobotName by rememberSaveable { mutableStateOf("") }
     var isCreatingRobot by remember { mutableStateOf(false) }
     var provisionedRobot by remember { mutableStateOf<ProvisionedRobot?>(null) }
     val clipboardManager = LocalClipboardManager.current
 
     var showCreateDialog by remember { mutableStateOf(false) }
-    var newEmail by remember { mutableStateOf("") }
+    var newEmail by rememberSaveable { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
-    var newName by remember { mutableStateOf("") }
-    var newRole by remember { mutableStateOf("USER") }
+    var newName by rememberSaveable { mutableStateOf("") }
+    var isCreatingUser by remember { mutableStateOf(false) }
+    var createUserError by remember { mutableStateOf<String?>(null) }
+    var newRole by rememberSaveable { mutableStateOf("USER") }
 
     // Selected user for detail view
     var selectedUser by remember { mutableStateOf<User?>(null) }
@@ -75,6 +82,8 @@ fun UsersScreen(
                 val service = apiClient.getService()
                 users = service.getUsers()
                 robots = service.getMyRobots()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 errorMessage = ApiErrorParser.parseErrorMessage(e)
             } finally {
@@ -112,6 +121,7 @@ fun UsersScreen(
                     IconButton(
                         onClick = {
                             newRobotName = ""
+                            errorMessage = null
                             showCreateRobotDialog = true
                         },
                         modifier = Modifier.testTag("add_robot_button")
@@ -123,6 +133,7 @@ fun UsersScreen(
                     }
                     IconButton(
                         onClick = { loadUsers() },
+                        enabled = !isLoading,
                         modifier = Modifier.testTag("users_refresh_button")
                     ) {
                         Icon(
@@ -141,6 +152,7 @@ fun UsersScreen(
                     newPassword = ""
                     newName = ""
                     newRole = "USER"
+                    createUserError = null
                     showCreateDialog = true
                 },
                 containerColor = ActionBlue,
@@ -148,10 +160,10 @@ fun UsersScreen(
                 shape = RoundedCornerShape(6.dp),
                 modifier = Modifier.testTag("add_user_fab")
             ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Add User"
-                )
+                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Text("Add user", style = MaterialTheme.typography.labelLarge)
+                }
             }
         },
         containerColor = SurfaceCanvas
@@ -334,8 +346,10 @@ fun UsersScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Creates an offline robot record and a gateway key shown once.")
+                        errorMessage?.let { Text(it, color = StatusRed) }
                         OutlinedTextField(
                             value = newRobotName,
+                            enabled = !isCreatingRobot,
                             onValueChange = { newRobotName = it },
                             label = { Text("Robot name") },
                             singleLine = true,
@@ -347,8 +361,9 @@ fun UsersScreen(
                     Button(
                         enabled = newRobotName.isNotBlank() && !isCreatingRobot,
                         onClick = {
+                            if (isCreatingRobot) return@Button
+                            isCreatingRobot = true
                             coroutineScope.launch {
-                                isCreatingRobot = true
                                 errorMessage = null
                                 try {
                                     provisionedRobot = apiClient.getService().createRobot(
@@ -356,6 +371,8 @@ fun UsersScreen(
                                     )
                                     showCreateRobotDialog = false
                                     loadUsers()
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     errorMessage = ApiErrorParser.parseErrorMessage(e)
                                 } finally {
@@ -415,29 +432,36 @@ fun UsersScreen(
         // Create User Dialog (Direct Admin Provisioning)
         if (showCreateDialog) {
             AlertDialog(
-                onDismissRequest = { showCreateDialog = false },
+                onDismissRequest = { if (!isCreatingUser) showCreateDialog = false },
                 title = { Text("Create New User") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        createUserError?.let { Text(it, color = StatusRed) }
                         OutlinedTextField(
                             value = newName,
                             onValueChange = { newName = it },
                             label = { Text("Full Name") },
                             singleLine = true,
+                            enabled = !isCreatingUser,
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
                             value = newEmail,
                             onValueChange = { newEmail = it },
                             label = { Text("Email") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                             singleLine = true,
+                            enabled = !isCreatingUser,
                             modifier = Modifier.fillMaxWidth()
                         )
                         OutlinedTextField(
                             value = newPassword,
                             onValueChange = { newPassword = it },
                             label = { Text("Password") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             singleLine = true,
+                            enabled = !isCreatingUser,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Row(
@@ -448,6 +472,7 @@ fun UsersScreen(
                             listOf("USER", "ADMIN").forEach { r ->
                                 FilterChip(
                                     selected = newRole == r,
+                                    enabled = !isCreatingUser,
                                     onClick = { newRole = r },
                                     label = { Text(r) }
                                 )
@@ -458,7 +483,9 @@ fun UsersScreen(
                 confirmButton = {
                     Button(
                         onClick = {
-                            showCreateDialog = false
+                            if (isCreatingUser) return@Button
+                            isCreatingUser = true
+                            createUserError = null
                             coroutineScope.launch {
                                 try {
                                     apiClient.getService().createUser(
@@ -469,19 +496,24 @@ fun UsersScreen(
                                             role = newRole
                                         )
                                     )
+                                    showCreateDialog = false
+                                    newPassword = ""
                                     loadUsers()
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
-                                    errorMessage = ApiErrorParser.parseErrorMessage(e)
-                                }
+                                    createUserError = ApiErrorParser.parseErrorMessage(e)
+                                } finally { isCreatingUser = false }
                             }
                         },
+                        enabled = !isCreatingUser && newName.isNotBlank() && newEmail.isNotBlank() && newPassword.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)
                     ) {
-                        Text("Create")
+                        Text(if (isCreatingUser) "Creating…" else "Create user")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showCreateDialog = false }) {
+                    TextButton(enabled = !isCreatingUser, onClick = { showCreateDialog = false }) {
                         Text("Cancel")
                     }
                 }
@@ -516,12 +548,15 @@ fun UserDetailDialog(
     var detailError by remember { mutableStateOf<String?>(null) }
     var robotIdToGrant by remember { mutableStateOf("") }
     var isOperating by remember { mutableStateOf(false) }
+    var confirmDeactivate by remember { mutableStateOf(false) }
 
     fun loadUserRobots() {
         coroutineScope.launch {
             isLoadingRobots = true
             try {
                 grantedRobots = apiClient.getService().getUserRobots(user.id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 detailError = ApiErrorParser.parseErrorMessage(e)
             } finally {
@@ -534,7 +569,34 @@ fun UserDetailDialog(
         loadUserRobots()
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    if (confirmDeactivate) AlertDialog(
+        onDismissRequest = { if (!isOperating) confirmDeactivate = false },
+        title = { Text("Deactivate ${user.name}?") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("This account will no longer be active. Review the selected user before continuing.")
+            detailError?.let { Text(it, color = StatusRed) }
+        } },
+        confirmButton = { TextButton(enabled = !isOperating, onClick = {
+            if (!isOperating) {
+                isOperating = true
+                detailError = null
+                coroutineScope.launch {
+                    try {
+                        val response = apiClient.getService().deleteUser(user.id)
+                        if (!response.isSuccessful) throw retrofit2.HttpException(response)
+                        confirmDeactivate = false
+                        onUserUpdated()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) { detailError = ApiErrorParser.parseErrorMessage(e)
+                    } finally { isOperating = false }
+                }
+            }
+        }) { Text(if (isOperating) "Deactivating…" else "Deactivate", color = StatusRed) } },
+        dismissButton = { TextButton(enabled = !isOperating, onClick = { confirmDeactivate = false }) { Text("Keep account") } }
+    )
+
+    if (!confirmDeactivate) Dialog(onDismissRequest = { if (!isOperating) onDismiss() }) {
         Card(
             shape = RoundedCornerShape(8.dp),
             colors = CardDefaults.cardColors(containerColor = PureWhite),
@@ -621,6 +683,8 @@ fun UserDetailDialog(
                                         UpdateUserRequest(role = newRole)
                                     )
                                     onUserUpdated()
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     detailError = ApiErrorParser.parseErrorMessage(e)
                                 } finally {
@@ -658,6 +722,8 @@ fun UserDetailDialog(
                                         UpdateUserRequest(is_active = !user.is_active)
                                     )
                                     onUserUpdated()
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     detailError = ApiErrorParser.parseErrorMessage(e)
                                 } finally {
@@ -727,8 +793,11 @@ fun UserDetailDialog(
                                             detailError = null
                                             try {
                                                 val path = robot.toRevocationPath()
-                                                apiClient.getService().revokeRobotAccess(path.userId, path.robotId)
+                                                val response = apiClient.getService().revokeRobotAccess(path.userId, path.robotId)
+                                        if (!response.isSuccessful) throw retrofit2.HttpException(response)
                                                 loadUserRobots()
+                                            } catch (e: CancellationException) {
+                                                throw e
                                             } catch (e: Exception) {
                                                 detailError = ApiErrorParser.parseErrorMessage(e)
                                             } finally {
@@ -767,9 +836,12 @@ fun UserDetailDialog(
                                     isOperating = true
                                     detailError = null
                                     try {
-                                        apiClient.getService().grantRobotAccess(user.id, robotIdToGrant.trim())
+                                        val response = apiClient.getService().grantRobotAccess(user.id, robotIdToGrant.trim())
+                                        if (!response.isSuccessful) throw retrofit2.HttpException(response)
                                         robotIdToGrant = ""
                                         loadUserRobots()
+                                    } catch (e: CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         detailError = ApiErrorParser.parseErrorMessage(e)
                                     } finally {
@@ -794,20 +866,7 @@ fun UserDetailDialog(
                     horizontalArrangement = Arrangement.End
                 ) {
                     OutlinedButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                isOperating = true
-                                detailError = null
-                                try {
-                                    apiClient.getService().deleteUser(user.id)
-                                    onUserUpdated()
-                                } catch (e: Exception) {
-                                    detailError = ApiErrorParser.parseErrorMessage(e)
-                                } finally {
-                                    isOperating = false
-                                }
-                            }
-                        },
+                        onClick = { confirmDeactivate = true },
                         enabled = !isOperating,
                         shape = RoundedCornerShape(4.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
@@ -815,7 +874,7 @@ fun UserDetailDialog(
                     ) {
                         Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Delete / Deactivate User")
+                        Text("Deactivate user")
                     }
                 }
             }

@@ -12,6 +12,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.example.robotoperator.data.model.isDeliveryActionAvailable
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,12 +51,15 @@ fun DeliveryDetailScreen(
     var delivery by remember { mutableStateOf<Delivery?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+    var pendingAction by remember { mutableStateOf<DeliveryAction?>(null) }
     var isExecutingAction by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     suspend fun fetchDelivery() {
         try {
             val fetched = apiClient.getService().getDelivery(deliveryId)
+            fetchError = null
             val previous = delivery
             delivery = fetched.copy(
                 physical_execution_confirmed = fetched.physical_execution_confirmed
@@ -59,8 +67,9 @@ fun DeliveryDetailScreen(
                 cancellation_requested = fetched.cancellation_requested
                     ?: previous?.cancellation_requested
             )
-        } catch (t: Throwable) {
-            actionError = ApiErrorParser.parse(t).message
+        } catch (e: CancellationException) { throw e
+        } catch (t: Exception) {
+            fetchError = ApiErrorParser.parse(t).message
         } finally {
             isLoading = false
         }
@@ -68,9 +77,47 @@ fun DeliveryDetailScreen(
 
     LaunchedEffect(deliveryId) {
         while (isActive) {
-            fetchDelivery()
+            if (!isExecutingAction) fetchDelivery()
             delay(3000)
         }
+    }
+
+    pendingAction?.let { action ->
+        val stillAvailable = delivery?.let { isDeliveryActionVisible(userRole, action) && isDeliveryActionAvailable(it, action) } == true
+        AlertDialog(
+            onDismissRequest = { if (!isExecutingAction) pendingAction = null },
+            title = { Text(when(action) {
+                DeliveryAction.DISPATCH -> "Request dispatch?"
+                DeliveryAction.CONFIRM_PICKUP -> "Confirm package received?"
+                DeliveryAction.CANCEL -> "Request cancellation?"
+            }) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(when(action) {
+                    DeliveryAction.DISPATCH -> "Check the destination and loading before requesting dispatch. The backend may report navigation unavailable."
+                    DeliveryAction.CONFIRM_PICKUP -> "Confirm only after the package has been collected. This requests the robot’s return journey."
+                    DeliveryAction.CANCEL -> "This requests cancellation. It does not confirm the robot has physically stopped."
+                })
+                if (!stillAvailable) Text("The delivery state has changed. Close this dialog to review it.")
+                actionError?.let { Text(it, color = StatusRed, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+            } },
+            confirmButton = { TextButton(enabled = stillAvailable && !isExecutingAction && fetchError == null, onClick = {
+                isExecutingAction = true
+                actionError = null
+                scope.launch {
+                    try {
+                        delivery = when(action) {
+                            DeliveryAction.DISPATCH -> apiClient.getService().dispatchDelivery(deliveryId)
+                            DeliveryAction.CONFIRM_PICKUP -> apiClient.getService().confirmPickupDelivery(deliveryId)
+                            DeliveryAction.CANCEL -> apiClient.getService().cancelDelivery(deliveryId)
+                        }
+                        pendingAction = null
+                    } catch (e: CancellationException) { throw e
+                    } catch (e: Exception) { actionError = ApiErrorParser.parse(e).message
+                    } finally { isExecutingAction = false }
+                }
+            }) { Text(if (isExecutingAction) "Sending…" else "Confirm") } },
+            dismissButton = { TextButton(enabled = !isExecutingAction, onClick = { pendingAction = null; actionError = null }) { Text("Back") } }
+        )
     }
 
     Scaffold(
@@ -127,7 +174,7 @@ fun DeliveryDetailScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = actionError ?: "Delivery not found",
+                        text = fetchError ?: "Delivery not found",
                         fontSize = 14.sp,
                         color = StatusRed
                     )
@@ -289,7 +336,7 @@ fun DeliveryDetailScreen(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Navigation uses the backend mock adapter. Physical navigation is unverified.",
+                            text = "Progress is reported by the backend. A successful request does not confirm physical robot movement.",
                             fontSize = 11.sp,
                             color = Slate500
                         )
@@ -318,113 +365,31 @@ fun DeliveryDetailScreen(
                             color = Slate500
                         )
 
-                        val canDispatch = isDeliveryActionVisible(userRole, DeliveryAction.DISPATCH)
-                        val canConfirmPickup = isDeliveryActionVisible(userRole, DeliveryAction.CONFIRM_PICKUP)
-                        if (canDispatch && canConfirmPickup) Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExecutingAction = true
-                                        actionError = null
-                                        try {
-                                            delivery = apiClient.getService().dispatchDelivery(deliveryId)
-                                        } catch (t: Throwable) {
-                                            actionError = ApiErrorParser.parse(t).message
-                                        } finally {
-                                            isExecutingAction = false
-                                        }
-                                    }
-                                },
-                                enabled = !isExecutingAction,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .defaultMinSize(minHeight = 44.dp)
-                                    .testTag("dispatch_delivery_button")
-                            ) {
-                                Text("Dispatch")
-                            }
+                        val availableActions = DeliveryAction.values().filter {
+                            isDeliveryActionVisible(userRole, it) && isDeliveryActionAvailable(d, it)
+                        }
+                        if (availableActions.isEmpty()) Text(
+                            if (isDeliveryLifecycleComplete(d)) "This delivery is complete." else "No action is available at this stage. Progress updates automatically.",
+                            style = MaterialTheme.typography.bodyMedium, color = Slate600
+                        )
+                        availableActions.forEach { action ->
+                            OutlinedButton(
+                                onClick = { pendingAction = action },
+                                enabled = !isExecutingAction && fetchError == null,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(when(action) {
+                                    DeliveryAction.DISPATCH -> "dispatch_delivery_button"
+                                    DeliveryAction.CONFIRM_PICKUP -> "confirm_pickup_button"
+                                    DeliveryAction.CANCEL -> "cancel_delivery_button"
+                                })
+                            ) { Text(when(action) {
+                                DeliveryAction.DISPATCH -> "Request dispatch"
+                                DeliveryAction.CONFIRM_PICKUP -> "Confirm package received"
+                                DeliveryAction.CANCEL -> "Request cancellation"
+                            }) }
+                        }
+                        if (isExecutingAction) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        fetchError?.let { Text("Updates unavailable: $it. Retrying automatically.", color = StatusRed, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
 
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExecutingAction = true
-                                        actionError = null
-                                        try {
-                                            delivery = apiClient.getService().confirmPickupDelivery(deliveryId)
-                                        } catch (t: Throwable) {
-                                            actionError = ApiErrorParser.parse(t).message
-                                        } finally {
-                                            isExecutingAction = false
-                                        }
-                                    }
-                                },
-                                enabled = !isExecutingAction,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = StatusGreen),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .defaultMinSize(minHeight = 44.dp)
-                                    .testTag("confirm_pickup_button")
-                            ) {
-                                Text("Pickup")
-                            }
-                        }
-                        else if (canConfirmPickup) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExecutingAction = true
-                                        actionError = null
-                                        try {
-                                            delivery = apiClient.getService().confirmPickupDelivery(deliveryId)
-                                        } catch (t: Throwable) {
-                                            actionError = ApiErrorParser.parse(t).message
-                                        } finally {
-                                            isExecutingAction = false
-                                        }
-                                    }
-                                },
-                                enabled = !isExecutingAction,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = StatusGreen),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .defaultMinSize(minHeight = 44.dp)
-                                    .testTag("confirm_pickup_button")
-                            ) {
-                                Text("Pickup")
-                            }
-                        }
-
-                        if (isDeliveryActionVisible(userRole, DeliveryAction.CANCEL)) OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    isExecutingAction = true
-                                    actionError = null
-                                    try {
-                                        delivery = apiClient.getService().cancelDelivery(deliveryId)
-                                    } catch (t: Throwable) {
-                                        actionError = ApiErrorParser.parse(t).message
-                                    } finally {
-                                        isExecutingAction = false
-                                    }
-                                }
-                            },
-                            enabled = !isExecutingAction,
-                            shape = RoundedCornerShape(6.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .defaultMinSize(minHeight = 44.dp)
-                                .testTag("cancel_delivery_button")
-                        ) {
-                            Text("Cancel Delivery")
-                        }
                     }
                 }
 

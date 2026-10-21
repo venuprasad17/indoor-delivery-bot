@@ -19,6 +19,10 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -78,15 +82,17 @@ fun LiveMappingConsoleScreen(
     var modeLabel by remember { mutableStateOf("Unknown") }
     var busy by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
-    var controlsExpanded by remember { mutableStateOf(false) }
-    var showRobotConnectionDialog by remember { mutableStateOf(false) }
-    var robotIp by remember { mutableStateOf("") }
-    var robotPort by remember { mutableStateOf("9090") }
+    var controlsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showRobotConnectionDialog by rememberSaveable { mutableStateOf(false) }
+    var robotIp by rememberSaveable { mutableStateOf("") }
+    var robotPort by rememberSaveable { mutableStateOf("9090") }
     var rosBridgeEnabled by remember { mutableStateOf(false) }
     var rosBridgeState by remember { mutableStateOf("UNKNOWN") }
     var connectionWorking by remember { mutableStateOf(false) }
     var connectionMessage by remember { mutableStateOf("Connection state not checked") }
-    var statusMessage by remember { mutableStateOf("Connecting to camera…") }
+    var confirmFinish by remember { mutableStateOf(false) }
+    var actionVersion by remember { mutableStateOf(0) }
+    var statusMessage by remember { mutableStateOf("Loading backend session status…") }
 
     DisposableEffect(activity) {
         val previousOrientation = activity?.requestedOrientation
@@ -97,22 +103,28 @@ fun LiveMappingConsoleScreen(
     }
 
     fun refreshSession() {
+        if (busy || working) return
+        busy = true
+        val version = actionVersion
         scope.launch {
-            busy = true
             try {
                 val status = apiClient.getService().getRobotStatus()
+                if (version != actionVersion) return@launch
                 robotStatus = status
                 if (status.id.isNotBlank()) settingsStore.cachedRobotId = status.id
                 modeLabel = status.control_mode
                 val sessions = apiClient.getService().getMappingSessions()
+                if (version != actionVersion) return@launch
                 val activeId = settingsStore.activeSessionId
                 session = sessions.firstOrNull { it.id == activeId && it.status.uppercase() in setOf("MAPPING", "PAUSED", "IDLE") }
                     ?: sessions.firstOrNull { it.status.uppercase() == "MAPPING" }
                     ?: sessions.firstOrNull { it.status.uppercase() == "PAUSED" }
                 session?.let { settingsStore.activeSessionId = it.id }
                 statusMessage = if (session == null) "No active mapping session" else "Session status refreshed"
-            } catch (error: Throwable) {
-                statusMessage = ApiErrorParser.parse(error).message
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (version == actionVersion) statusMessage = ApiErrorParser.parse(error).message
             } finally {
                 busy = false
             }
@@ -120,14 +132,18 @@ fun LiveMappingConsoleScreen(
     }
 
     fun updateSession(action: suspend (String) -> MappingSession) {
+        if (working || busy) return
         val id = session?.id ?: return
+        working = true
+        actionVersion++
         scope.launch {
-            working = true
             statusMessage = "Updating mapping session…"
             try {
                 session = action(id)
                 statusMessage = "Mapping session: ${session?.status ?: "updated"}"
-            } catch (error: Throwable) {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 statusMessage = ApiErrorParser.parse(error).message
             } finally {
                 working = false
@@ -136,12 +152,16 @@ fun LiveMappingConsoleScreen(
     }
 
     fun changeMode(mode: String) {
+        if (working || busy) return
+        working = true
+        actionVersion++
         scope.launch {
-            working = true
             try {
                 modeLabel = apiClient.getService().setRobotMode(ModeRequest(mode)).mode
                 statusMessage = "Backend mode request accepted: $modeLabel"
-            } catch (error: Throwable) {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 statusMessage = ApiErrorParser.parse(error).message
             } finally {
                 working = false
@@ -150,29 +170,36 @@ fun LiveMappingConsoleScreen(
     }
 
     fun refreshRobotConnection() {
+        if (connectionWorking) return
+        connectionWorking = true
         scope.launch {
             try {
                 val state = apiClient.getService().getRobotConnection()
                 rosBridgeEnabled = state.enabled
                 rosBridgeState = state.state
-                state.robot_ip?.let { robotIp = it }
-                state.port?.let { robotPort = it.toString() }
+                if (robotIp.isBlank()) {
+                    state.robot_ip?.let { robotIp = it }
+                    state.port?.let { robotPort = it.toString() }
+                }
                 connectionMessage = if (state.enabled) "Backend ROSBridge: ${state.state.lowercase()}"
                     else "ROSBridge is disabled in backend configuration"
-            } catch (error: Throwable) {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 connectionMessage = ApiErrorParser.parse(error).message
-            }
+            } finally { connectionWorking = false }
         }
     }
 
     fun requestRobotConnection() {
+        if (connectionWorking) return
         val target = parseRobotConnectionTarget(robotIp, robotPort)
         if (target == null) {
             connectionMessage = "Enter a private IPv4 address and a port from 1 to 65535"
             return
         }
+        connectionWorking = true
         scope.launch {
-            connectionWorking = true
             try {
                 val result = apiClient.getService().connectRobotBridge(
                     RobotConnectionRequest(robot_ip = target.ip, port = target.port)
@@ -180,7 +207,9 @@ fun LiveMappingConsoleScreen(
                 rosBridgeEnabled = result.enabled
                 rosBridgeState = result.state
                 connectionMessage = "Backend ROSBridge connection requested; refresh to check its state"
-            } catch (error: Throwable) {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
                 connectionMessage = ApiErrorParser.parse(error).message
             } finally {
                 connectionWorking = false
@@ -210,6 +239,7 @@ fun LiveMappingConsoleScreen(
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         val compact = maxWidth < 700.dp || maxHeight < 420.dp
         val edge = if (compact) 8.dp else 16.dp
+        val panelHeight = (maxHeight - 160.dp).coerceAtLeast(96.dp)
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = {
@@ -252,7 +282,7 @@ fun LiveMappingConsoleScreen(
                 Spacer(Modifier.width(if (compact) 5.dp else 12.dp))
                 HudAction(
                     label = if (session?.status?.uppercase() == "MAPPING") "Ⅱ  PAUSE" else "▶  RESUME",
-                    enabled = !working && session?.status?.uppercase() in setOf("MAPPING", "PAUSED"),
+                    enabled = !working && !busy && session?.status?.uppercase() in setOf("MAPPING", "PAUSED"),
                     modifier = Modifier.weight(1f),
                     tag = "console_pause"
                 ) {
@@ -273,7 +303,7 @@ fun LiveMappingConsoleScreen(
         // Mapping actions float over the camera instead of taking over the page.
         GlassPanel(
             modifier = Modifier.align(Alignment.CenterStart).padding(start = edge, top = if (compact) 64.dp else 86.dp)
-                .width(if (compact) 156.dp else 214.dp), compact = compact
+                .width(if (compact) 156.dp else 214.dp).heightIn(max = panelHeight).verticalScroll(rememberScrollState()), compact = compact
         ) {
             Text("MAPPING", color = Cyan, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace,
                 fontSize = if (compact) 12.sp else 16.sp)
@@ -282,30 +312,35 @@ fun LiveMappingConsoleScreen(
             Text(statusMessage, color = Muted, fontSize = if (compact) 10.sp else 12.sp, lineHeight = 15.sp)
             when (session?.status?.uppercase()) {
                 "MAPPING" -> {
-                    HudAction("FINISH MAP", !working, Modifier.fillMaxWidth(), "console_finish") {
-                        updateSession { apiClient.getService().finishMappingSession(it, FinishSessionRequest()) }
+                    HudAction("FINISH MAP", !working && !busy, Modifier.fillMaxWidth(), "console_finish") {
+                        confirmFinish = true
                     }
                 }
                 "PAUSED" -> {
-                    HudAction("FINISH MAP", !working, Modifier.fillMaxWidth(), "console_finish") {
-                        updateSession { apiClient.getService().finishMappingSession(it, FinishSessionRequest()) }
+                    HudAction("FINISH MAP", !working && !busy, Modifier.fillMaxWidth(), "console_finish") {
+                        confirmFinish = true
                     }
                 }
-                "IDLE" -> HudAction("START MAP", !working, Modifier.fillMaxWidth(), "console_start") {
+                "IDLE" -> HudAction("START MAP", !working && !busy, Modifier.fillMaxWidth(), "console_start") {
                     updateSession { apiClient.getService().startMappingSession(it) }
                 }
                 else -> HudAction("NEW SESSION", !working && !busy, Modifier.fillMaxWidth(), "console_create") {
                     val robotId = settingsStore.cachedRobotId
                     if (robotId.isNullOrBlank()) statusMessage = "No robot is registered or available to this admin account."
-                    else scope.launch {
+                    else if (!working && !busy) {
                         working = true
+                        actionVersion++
+                        scope.launch {
                         try {
                             val created = apiClient.getService().createMappingSession(CreateSessionRequest(robot_id = robotId))
                             session = created
                             settingsStore.activeSessionId = created.id
                             statusMessage = "Session created. Start mapping when ready."
-                        } catch (error: Throwable) { statusMessage = ApiErrorParser.parse(error).message }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) { statusMessage = ApiErrorParser.parse(error).message }
                         finally { working = false }
+                        }
                     }
                 }
             }
@@ -314,7 +349,8 @@ fun LiveMappingConsoleScreen(
         }
 
         Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = edge, top = if (compact) 64.dp else 86.dp),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = edge, top = if (compact) 64.dp else 86.dp)
+                .heightIn(max = panelHeight).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
             horizontalAlignment = Alignment.End
         ) {
@@ -333,16 +369,20 @@ fun LiveMappingConsoleScreen(
                 GlassPanel(Modifier.width(if (compact) 160.dp else 210.dp), compact) {
                     Text("BACKEND REQUESTS", color = Cyan, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
                         fontSize = if (compact) 10.sp else 12.sp)
-                    HudAction("REQUEST MANUAL", !working, Modifier.fillMaxWidth(), "console_manual") { changeMode("MANUAL") }
-                    HudAction("REQUEST AUTO", !working, Modifier.fillMaxWidth(), "console_auto") { changeMode("AUTONOMOUS") }
+                    HudAction("REQUEST MANUAL", !working && !busy, Modifier.fillMaxWidth(), "console_manual") { changeMode("MANUAL") }
+                    HudAction("REQUEST AUTO", !working && !busy, Modifier.fillMaxWidth(), "console_auto") { changeMode("AUTONOMOUS") }
                     Button(
                         onClick = {
+                            if (working) return@Button
+                            working = true
+                            actionVersion++
                             scope.launch {
-                                working = true
                                 try {
                                     safetyResponse = apiClient.getService().emergencyStop(EmergencyStopRequest())
                                     statusMessage = "Emergency-stop request sent to backend"
-                                } catch (error: Throwable) {
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
                                     statusMessage = "E-stop request failed: ${ApiErrorParser.parse(error).message}"
                                 } finally { working = false }
                             }
@@ -386,12 +426,23 @@ fun LiveMappingConsoleScreen(
         )
     }
 
+    if (confirmFinish) AlertDialog(
+        onDismissRequest = { confirmFinish = false },
+        title = { Text("Finish this mapping session?") },
+        text = { Text("This ends the current session. Use the mapping detail screen if you need to enter a map reference. Finishing does not verify a physical map.") },
+        confirmButton = { TextButton(enabled = !working && !busy && session?.status?.uppercase() in setOf("MAPPING", "PAUSED"), onClick = {
+            confirmFinish = false
+            updateSession { apiClient.getService().finishMappingSession(it, FinishSessionRequest()) }
+        }) { Text("Finish session") } },
+        dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("Keep session") } }
+    )
+
     if (showRobotConnectionDialog) {
         AlertDialog(
             onDismissRequest = { if (!connectionWorking) showRobotConnectionDialog = false },
             title = { Text("ROBOT WI-FI CONNECTION") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("The backend will open a ROSBridge WebSocket to this robot on its local Wi-Fi.")
                     OutlinedTextField(
                         value = robotIp,
@@ -475,7 +526,7 @@ private fun HudAction(label: String, enabled: Boolean, modifier: Modifier, tag: 
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 36.dp).testTag(tag),
+        modifier = modifier.heightIn(min = 48.dp).testTag(tag),
         shape = RoundedCornerShape(3.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, if (enabled) Cyan else Muted.copy(alpha = 0.45f)),
         colors = ButtonDefaults.outlinedButtonColors(
@@ -485,7 +536,7 @@ private fun HudAction(label: String, enabled: Boolean, modifier: Modifier, tag: 
             disabledContentColor = Muted.copy(alpha = 0.7f)
         ),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-    ) { Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, maxLines = 1) }
+    ) { Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace) }
 }
 
 @Composable

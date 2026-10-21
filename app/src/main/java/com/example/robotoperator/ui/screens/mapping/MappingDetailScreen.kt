@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,23 +43,31 @@ fun MappingDetailScreen(
 ) {
     var session by remember { mutableStateOf<MappingSession?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var actionVersion by remember(sessionId) { mutableStateOf(0) }
+    var fetchError by remember(sessionId) { mutableStateOf<String?>(null) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var isExecutingAction by remember { mutableStateOf(false) }
 
-    var showFinishDialog by remember { mutableStateOf(false) }
-    var mapDataRefInput by remember { mutableStateOf("") }
+    var showFinishDialog by rememberSaveable { mutableStateOf(false) }
+    var mapDataRefInput by rememberSaveable { mutableStateOf("") }
 
     val currentPose by stateHolder.currentPose.collectAsState()
     val poseTrail by stateHolder.poseTrail.collectAsState()
     val scope = rememberCoroutineScope()
 
     suspend fun fetchSession() {
+        val version = actionVersion
         try {
             val s = apiClient.getService().getMappingSession(sessionId)
-            session = s
-        } catch (t: Throwable) {
+            if (version == actionVersion && !isExecutingAction) {
+                session = s
+                fetchError = null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Exception) {
             val parsed = ApiErrorParser.parse(t)
-            actionError = parsed.message
+            if (version == actionVersion) fetchError = parsed.message
         } finally {
             isLoading = false
         }
@@ -66,7 +76,7 @@ fun MappingDetailScreen(
     // Polling every 2s while mapping session is active (MAPPING or PAUSED), or single initial fetch
     LaunchedEffect(sessionId) {
         while (isActive) {
-            fetchSession()
+            if (!isExecutingAction) fetchSession()
             val currentStatus = session?.status?.uppercase()
             if (currentStatus == "MAPPING" || currentStatus == "PAUSED" || session == null) {
                 delay(2000)
@@ -130,7 +140,7 @@ fun MappingDetailScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = actionError ?: "Session not found",
+                        text = fetchError ?: "Session not found",
                         fontSize = 14.sp,
                         color = StatusRed
                     )
@@ -152,6 +162,10 @@ fun MappingDetailScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                fetchError?.let {
+                    Text("Updates unavailable: $it", color = StatusRed, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(enabled = !isExecutingAction, onClick = { scope.launch { fetchSession() } }) { Text("Retry refresh") }
+                }
                 if (!actionError.isNullOrBlank()) {
                     Box(
                         modifier = Modifier
@@ -204,19 +218,23 @@ fun MappingDetailScreen(
                                 "IDLE" -> {
                                     Button(
                                         onClick = {
+                                            if (isExecutingAction || fetchError != null) return@Button
+                                            isExecutingAction = true
+                                            actionVersion++
                                             scope.launch {
-                                                isExecutingAction = true
                                                 actionError = null
                                                 try {
                                                     session = apiClient.getService().startMappingSession(sessionId)
-                                                } catch (t: Throwable) {
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (t: Exception) {
                                                     actionError = ApiErrorParser.parse(t).message
                                                 } finally {
                                                     isExecutingAction = false
                                                 }
                                             }
                                         },
-                                        enabled = !isExecutingAction,
+                                        enabled = !isExecutingAction && fetchError == null,
                                         shape = RoundedCornerShape(6.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                                         modifier = Modifier
@@ -235,19 +253,23 @@ fun MappingDetailScreen(
                                     ) {
                                         Button(
                                             onClick = {
+                                                if (isExecutingAction || fetchError != null) return@Button
+                                                isExecutingAction = true
+                                                actionVersion++
                                                 scope.launch {
-                                                    isExecutingAction = true
                                                     actionError = null
                                                     try {
                                                         session = apiClient.getService().pauseMappingSession(sessionId)
-                                                    } catch (t: Throwable) {
+                                                    } catch (e: CancellationException) {
+                                                        throw e
+                                                    } catch (t: Exception) {
                                                         actionError = ApiErrorParser.parse(t).message
                                                     } finally {
                                                         isExecutingAction = false
                                                     }
                                                 }
                                             },
-                                            enabled = !isExecutingAction,
+                                            enabled = !isExecutingAction && fetchError == null,
                                             shape = RoundedCornerShape(6.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = StatusAmber),
                                             modifier = Modifier
@@ -259,8 +281,8 @@ fun MappingDetailScreen(
                                         }
 
                                         Button(
-                                            onClick = { showFinishDialog = true },
-                                            enabled = !isExecutingAction,
+                                            onClick = { actionError = null; showFinishDialog = true },
+                                            enabled = !isExecutingAction && fetchError == null,
                                             shape = RoundedCornerShape(6.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                                             modifier = Modifier
@@ -280,19 +302,23 @@ fun MappingDetailScreen(
                                     ) {
                                         Button(
                                             onClick = {
+                                                if (isExecutingAction || fetchError != null) return@Button
+                                                isExecutingAction = true
+                                                actionVersion++
                                                 scope.launch {
-                                                    isExecutingAction = true
                                                     actionError = null
                                                     try {
                                                         session = apiClient.getService().resumeMappingSession(sessionId)
-                                                    } catch (t: Throwable) {
+                                                    } catch (e: CancellationException) {
+                                                        throw e
+                                                    } catch (t: Exception) {
                                                         actionError = ApiErrorParser.parse(t).message
                                                     } finally {
                                                         isExecutingAction = false
                                                     }
                                                 }
                                             },
-                                            enabled = !isExecutingAction,
+                                            enabled = !isExecutingAction && fetchError == null,
                                             shape = RoundedCornerShape(6.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                                             modifier = Modifier
@@ -304,8 +330,8 @@ fun MappingDetailScreen(
                                         }
 
                                         Button(
-                                            onClick = { showFinishDialog = true },
-                                            enabled = !isExecutingAction,
+                                            onClick = { actionError = null; showFinishDialog = true },
+                                            enabled = !isExecutingAction && fetchError == null,
                                             shape = RoundedCornerShape(6.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                                             modifier = Modifier
@@ -374,13 +400,16 @@ fun MappingDetailScreen(
 
         if (showFinishDialog) {
             AlertDialog(
-                onDismissRequest = { showFinishDialog = false },
+                onDismissRequest = { if (!isExecutingAction) showFinishDialog = false },
                 title = { Text("Finish Mapping Session") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        fetchError?.let { Text("Refresh failed: $it. Close this dialog and retry refresh.", color = StatusRed) }
+                        actionError?.let { Text(it, color = StatusRed) }
                         Text("Optionally enter a map data reference identifier:", fontSize = 13.sp, color = Slate600)
                         OutlinedTextField(
                             value = mapDataRefInput,
+                            enabled = !isExecutingAction && fetchError == null,
                             onValueChange = { mapDataRefInput = it },
                             placeholder = { Text("map_ref_floor_1") },
                             singleLine = true,
@@ -392,31 +421,36 @@ fun MappingDetailScreen(
                 confirmButton = {
                     Button(
                         onClick = {
+                            if (isExecutingAction || fetchError != null) return@Button
+                            actionVersion++
                             val ref = mapDataRefInput.trim().ifBlank { null }
-                            showFinishDialog = false
+                            isExecutingAction = true
                             scope.launch {
-                                isExecutingAction = true
                                 actionError = null
                                 try {
                                     session = apiClient.getService().finishMappingSession(
                                         sessionId,
                                         FinishSessionRequest(map_data_ref = ref)
                                     )
-                                } catch (t: Throwable) {
+                                    showFinishDialog = false
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (t: Exception) {
                                     actionError = ApiErrorParser.parse(t).message
                                 } finally {
                                     isExecutingAction = false
                                 }
                             }
                         },
+                        enabled = !isExecutingAction && fetchError == null,
                         shape = RoundedCornerShape(6.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)
                     ) {
-                        Text("Finish Session")
+                        Text(if (isExecutingAction) "Finishing…" else "Finish session")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showFinishDialog = false }) {
+                    TextButton(enabled = !isExecutingAction, onClick = { showFinishDialog = false }) {
                         Text("Cancel")
                     }
                 }

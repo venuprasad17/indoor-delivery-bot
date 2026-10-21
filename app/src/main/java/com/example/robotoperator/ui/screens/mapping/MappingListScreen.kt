@@ -27,6 +27,7 @@ import com.example.robotoperator.data.model.MappingSession
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -50,7 +51,9 @@ fun MappingListScreen(
             try {
                 val list = apiClient.getService().getMappingSessions()
                 sessions = list
-            } catch (t: Throwable) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Exception) {
                 val parsed = ApiErrorParser.parse(t)
                 errorMessage = parsed.message
             } finally {
@@ -67,13 +70,14 @@ fun MappingListScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
+                    if (isCreating) return@FloatingActionButton
                     val robotId = settingsStore.cachedRobotId
                     if (robotId.isNullOrBlank()) {
                         errorMessage = "Cannot create session: No robot registered or cached yet."
                         return@FloatingActionButton
                     }
+                    isCreating = true
                     scope.launch {
-                        isCreating = true
                         errorMessage = null
                         activeConflictSessionId = null
                         try {
@@ -82,7 +86,9 @@ fun MappingListScreen(
                             )
                             settingsStore.activeSessionId = newSession.id
                             onSelectSession(newSession.id)
-                        } catch (t: Throwable) {
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (t: Exception) {
                             val parsed = ApiErrorParser.parse(t)
                             if (parsed.statusCode == 409 && !parsed.activeSessionId.isNullOrBlank()) {
                                 activeConflictSessionId = parsed.activeSessionId
@@ -135,15 +141,16 @@ fun MappingListScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "MAPPING SESSIONS",
-                    fontSize = 12.sp,
+                    text = "Mapping sessions",
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = Slate500
                 )
                 IconButton(
                     onClick = { loadSessions() },
-                    modifier = Modifier.size(32.dp)
+                    enabled = !isLoading,
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -200,6 +207,8 @@ fun MappingListScreen(
                 }
             }
 
+            Text("Create a mapping session, then open it to manage recording and review reported poses.", style = MaterialTheme.typography.bodyMedium, color = Slate600)
+            if (errorMessage != null) TextButton(enabled = !isLoading, onClick = { loadSessions() }) { Text("Retry loading sessions") }
             when {
                 isLoading -> {
                     Box(
@@ -230,7 +239,8 @@ fun MappingListScreen(
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 88.dp)
                     ) {
                         items(sessions, key = { it.id }) { session ->
                             Card(
@@ -254,6 +264,7 @@ fun MappingListScreen(
                                     ) {
                                         Text(
                                             text = session.map_data_ref ?: "Session ${session.id.take(8)}",
+                                            modifier = Modifier.weight(1f).padding(end = 12.dp),
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = Slate900

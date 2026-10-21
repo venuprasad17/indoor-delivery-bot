@@ -26,7 +26,7 @@ Internal operations mobile application for the Autonomous Indoor Delivery Robot 
    - JWT access tokens stored securely in memory with automated HTTP-only cookie refresh interception on 401.
 
 3. **Backend and navigation scope**:
-   - Delivery navigation in the current backend is provided by its mock navigation adapter. Delivery status changes and mock navigation outcomes are application state, not proof of physical robot motion or a motor stop.
+   - The current backend has no configured navigation transport. Dispatch, pickup/return, and cancellation requests return NAVIGATION_UNAVAILABLE until a transport is integrated. Delivery records and reported lifecycle states do not prove physical robot motion or a motor stop.
    - This mobile app does not provide evidence that hardware telemetry, localization, mapping, or physical safety has been validated. Treat dashboard values as reported telemetry and observe their freshness/connection labels.
 
 ## Reproducible Build and Tests
@@ -65,3 +65,74 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 ```
 
 This command has not been verified on JDK 21. Screenshot tests are not included in it.
+
+## UI completion checks (16 October 2026)
+
+Admin primary navigation is Dashboard, Deliveries, and More. Mapping, Robot
+console, and Destinations are available in More; Android Back returns from
+these tools to More. Standard users retain Deliveries and More.
+
+Destination creation requires an explicitly selected finished map and finite
+coordinates. Failed saves retain the dialog and inputs; deletion requires
+confirmation. Delivery creation requires deliberate destination selection and
+creates a record separately from dispatch. Action confirmation follows the
+reported lifecycle and retains backend errors. The backend remains authoritative
+for authorization, map validity, and robot readiness.
+
+Nonsecret login inputs and form drafts use saved state across recreation;
+passwords are not saved. Status labels wrap with larger text and controls expose
+button semantics. Device checks are still needed for small screens, large font
+scales, TalkBack, keyboard focus, and rotation during pending requests.
+
+From this checkout's `frontend` directory, run:
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --tests 'com.example.robotoperator.*'
+```
+
+This includes UiValidationTest for nonfinite coordinates, lifecycle action
+availability, and compact role-specific navigation. See
+`../assessment/UI_IMPLEMENTATION_PLAN.md` for the recorded validation outcome.
+
+### Additional usability fixes
+
+Events use backend severity filtering (including `WARN`) and load subsequent
+pages. Refresh failures remain visible beside retained data. User creation
+masks passwords and keeps failed submissions open. Robot access mutations and
+account deactivation check unsuccessful HTTP responses; deactivation asks for
+confirmation. Mapping creation prevents duplicate taps and failed completion
+keeps its form open. Shared status badges use stronger text contrast, metadata
+rows wrap within allocated widths, and event filters wrap on smaller screens.
+
+### Plain JVM regression tests without native rendering
+
+The tests in `com.example.robotoperator.*` use plain JUnit and do not use
+Robolectric runners. If the large Robolectric native-renderer download is
+unavailable, run this opt-in command from `frontend`:
+
+```powershell
+.\gradlew.bat --offline --no-configuration-cache -I ../assessment/pure-jvm-tests.init.gradle :app:testDebugUnitTest
+```
+
+The init script selects only those tests and excludes
+`org.robolectric:nativeruntime-dist-compat` from that run's test runtime.
+It does not change app dependencies or the normal test configuration. This is
+not a substitute for screenshot, Robolectric, emulator, or device testing.
+
+Mapping details discard refresh responses that predate a new action and show
+refresh errors separately from action failures. The console blocks duplicate
+requests, confirms finishing a session, preserves connection drafts, and scrolls
+its control panels in short landscape layouts.
+
+### User and Admin entry screens
+
+The signed-out app opens a welcome screen with **User** and **Admin** choices.
+Each opens a dedicated role-labelled sign-in journey. User accounts open My
+deliveries; administrators open Dashboard and management tools. The account role
+returned by `/auth/me` must match the selected journey before authentication is
+published to the UI. Picking Admin does not assign administrator privileges.
+Public registration is available only on the User journey and must return USER.
+
+Connection settings are a secondary link, not the initial screen. If no backend
+is configured, submitting a form gives a setup message without sending a network
+request. A valid deployed HTTPS backend is still required for real sign-in.

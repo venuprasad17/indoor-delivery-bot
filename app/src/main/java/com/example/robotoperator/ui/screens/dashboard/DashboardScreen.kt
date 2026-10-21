@@ -29,6 +29,7 @@ import com.example.robotoperator.ui.components.KeyValRow
 import com.example.robotoperator.ui.components.PosePlotCanvas
 import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -50,8 +51,9 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
 
     fun refreshStatus() {
+        if (isRefreshing) return
+        isRefreshing = true
         scope.launch {
-            isRefreshing = true
             restError = null
             try {
                 val status = apiClient.getService().getRobotStatus()
@@ -60,7 +62,9 @@ fun DashboardScreen(
                 if (status.id.isNotBlank()) {
                     settingsStore.cachedRobotId = status.id
                 }
-            } catch (t: Throwable) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Exception) {
                 val parsed = ApiErrorParser.parse(t)
                 if (parsed.errorCode == "NO_ROBOT_REGISTERED" || parsed.statusCode == 404) {
                     noRobotRegistered = true
@@ -100,7 +104,8 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Live updates disconnected. Polling mode.",
+                        text = "Live updates disconnected. Refresh to request the latest status.",
+                        modifier = Modifier.weight(1f).padding(end = 8.dp),
                         fontSize = 12.sp,
                         color = StatusAmber,
                         fontFamily = FontFamily.Monospace,
@@ -109,9 +114,10 @@ fun DashboardScreen(
                     TextButton(
                         onClick = { refreshStatus() },
                         contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.height(24.dp)
+                        enabled = !isRefreshing,
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) {
-                        Text("Retry", fontSize = 11.sp, color = ActionBlue)
+                        Text("Refresh", fontSize = 14.sp, color = ActionBlue)
                     }
                 }
             }
@@ -135,7 +141,7 @@ fun DashboardScreen(
                         color = Slate900
                     )
                     Text(
-                        text = "Register a robot on the backend to begin telemetry tracking.",
+                        text = "Open More > User & Robot Access to register a robot.",
                         fontSize = 13.sp,
                         color = Slate500,
                         modifier = Modifier.padding(top = 4.dp)

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,8 +41,8 @@ fun ServerSettingsScreen(
     onNavigateBack: () -> Unit,
     onSaved: () -> Unit
 ) {
-    var selectedEnvironment by remember { mutableStateOf(settingsStore.selectedEnvironment) }
-    var urlInput by remember {
+    var selectedEnvironment by rememberSaveable { mutableStateOf(settingsStore.selectedEnvironment) }
+    var urlInput by rememberSaveable {
         mutableStateOf(selectedEnvironment?.let(settingsStore::endpointFor).orEmpty())
     }
     var isTesting by remember { mutableStateOf(false) }

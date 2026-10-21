@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -16,7 +17,7 @@ import com.example.robotoperator.data.api.DashboardWebSocketClient
 import com.example.robotoperator.data.model.EmergencyStopRequest
 import com.example.robotoperator.data.model.canAccessRobotDashboard
 import com.example.robotoperator.data.model.initialMainTabName
-import com.example.robotoperator.data.model.visibleMainTabNames
+import com.example.robotoperator.data.model.primaryMainTabNames
 import com.example.robotoperator.data.model.ModeRequest
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.AuthManager
@@ -69,8 +70,8 @@ fun MainScaffold(
 ) {
     val currentUser by authManager.currentUser.collectAsState()
     val isAdmin = canAccessRobotDashboard(currentUser?.role)
-    val visibleTabs = visibleMainTabNames(currentUser?.role)
-    var currentTab by remember(currentUser?.role) {
+    val visibleTabs = primaryMainTabNames(currentUser?.role)
+    var currentTab by rememberSaveable(currentUser?.role) {
         mutableStateOf(MainTab.valueOf(initialMainTabName(currentUser?.role)))
     }
     var currentSubScreen by remember { mutableStateOf<SubScreen>(SubScreen.None) }
@@ -149,6 +150,10 @@ fun MainScaffold(
         }
     }
 
+    BackHandler(enabled = currentSubScreen is SubScreen.None && currentTab.name !in visibleTabs) {
+        currentTab = MainTab.MORE
+    }
+
     Scaffold(
         topBar = {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -221,10 +226,10 @@ fun MainScaffold(
                 NavigationBar(
                     containerColor = PureWhite,
                     tonalElevation = 0.dp,
-                    modifier = Modifier.height(64.dp)
+                    modifier = Modifier.heightIn(min = 80.dp)
                 ) {
                     MainTab.values().filter { tab -> tab.name in visibleTabs }.forEach { tab ->
-                        val selected = currentTab == tab
+                        val selected = currentTab == tab || (tab == MainTab.MORE && currentTab.name !in visibleTabs)
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
@@ -368,7 +373,10 @@ fun MainScaffold(
                                 onNavigateToServerSettings = {
                                     currentSubScreen = SubScreen.ServerSettings
                                 },
-                                onLoggedOut = onLoggedOut
+                                onLoggedOut = onLoggedOut,
+                                onNavigateToMapping = { if (isAdmin) currentTab = MainTab.MAPPING },
+                                onNavigateToConsole = { if (isAdmin) currentTab = MainTab.LIVE_CONSOLE },
+                                onNavigateToDestinations = { if (isAdmin) currentTab = MainTab.DESTINATIONS }
                             )
                         }
                     }

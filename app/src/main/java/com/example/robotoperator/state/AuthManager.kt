@@ -6,6 +6,7 @@ import com.example.robotoperator.data.model.LoginRequest
 import com.example.robotoperator.data.model.RegisterRequest
 import com.example.robotoperator.data.model.RobotStatus
 import com.example.robotoperator.data.model.User
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +31,7 @@ class AuthManager(private val apiClient: ApiClient) {
         }
     }
 
-    suspend fun login(email: String, pass: String): Boolean {
+    suspend fun login(email: String, pass: String, expectedRole: String? = null): Boolean {
         _authError.value = null
         return try {
             val service = apiClient.getService()
@@ -38,6 +39,11 @@ class AuthManager(private val apiClient: ApiClient) {
             apiClient.setAuth(loginResp)
 
             val me = service.getMe()
+            if (expectedRole != null && !matchesLoginRole(expectedRole, me.role)) {
+                try { service.logout() } catch (_: Exception) { /* Always clear local credentials. */ }
+                logoutLocal("This account cannot use the ${expectedRole.lowercase()} login. Choose the matching account type and sign in again.")
+                return false
+            }
             _currentUser.value = me
 
             // For USER role, fetch granted robots
@@ -51,9 +57,12 @@ class AuthManager(private val apiClient: ApiClient) {
 
             _isAuthenticated.value = true
             true
-        } catch (t: Throwable) {
+        } catch (cancelled: CancellationException) {
+            logoutLocal(null)
+            throw cancelled
+        } catch (t: Exception) {
             val parsed = ApiErrorParser.parse(t)
-            _authError.value = parsed.message
+            logoutLocal(parsed.message)
             false
         }
     }
@@ -73,6 +82,11 @@ class AuthManager(private val apiClient: ApiClient) {
             apiClient.setAuth(regResp)
 
             val me = service.getMe()
+            if (!matchesLoginRole("USER", me.role)) {
+                try { service.logout() } catch (_: Exception) { }
+                logoutLocal("Registration did not return a user account. Contact your administrator.")
+                return false
+            }
             _currentUser.value = me
 
             if (me.role == "USER") {
@@ -85,9 +99,12 @@ class AuthManager(private val apiClient: ApiClient) {
 
             _isAuthenticated.value = true
             true
-        } catch (t: Throwable) {
+        } catch (cancelled: CancellationException) {
+            logoutLocal(null)
+            throw cancelled
+        } catch (t: Exception) {
             val parsed = ApiErrorParser.parse(t)
-            _authError.value = parsed.message
+            logoutLocal(parsed.message)
             false
         }
     }

@@ -37,3 +37,7 @@ fun RobotAccessGrant.toRevocationPath() = RobotAccessRevocation(
     userId = user_id,
     robotId = robot_id
 )
+
+/** Primary navigation; administrator tools remain available in More. */
+fun primaryMainTabNames(role: String?): Set<String> =
+    visibleMainTabNames(role).filter { it in setOf("DASHBOARD", "DELIVERIES", "MORE") }.toSet()

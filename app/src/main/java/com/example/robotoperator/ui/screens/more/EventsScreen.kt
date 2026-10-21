@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -24,9 +25,11 @@ import com.example.robotoperator.data.model.SystemEvent
 import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EventsScreen(
     apiClient: ApiClient,
@@ -37,36 +40,43 @@ fun EventsScreen(
     var totalCount by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var selectedSeverityFilter by remember { mutableStateOf("ALL") }
+    var selectedSeverityFilter by rememberSaveable { mutableStateOf("ALL") }
 
-    fun loadEvents() {
-        coroutineScope.launch {
-            isLoading = true
-            errorMessage = null
+    var page by remember { mutableStateOf(1) }
+    var requestVersion by remember { mutableStateOf(0) }
+    var loadJob by remember { mutableStateOf<Job?>(null) }
+
+    fun loadEvents(append: Boolean = false) {
+        if (append && isLoading) return
+        val version = ++requestVersion
+        loadJob?.cancel()
+        val requestedPage = if (append) page + 1 else 1
+        val severity = selectedSeverityFilter.takeUnless { it == "ALL" }
+        isLoading = true
+        errorMessage = null
+        loadJob = coroutineScope.launch {
             try {
-                val service = apiClient.getService()
-                val resp = service.getEvents(page = 1, pageSize = 50)
-                events = resp.items
+                val resp = apiClient.getService().getEvents(severity = severity, page = requestedPage, pageSize = 50)
+                if (version != requestVersion) return@launch
+                events = if (append) (events + resp.items).distinctBy { it.id } else resp.items
                 totalCount = resp.total
+                page = requestedPage
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 errorMessage = ApiErrorParser.parseErrorMessage(e)
-            } finally {
-                isLoading = false
-            }
+            } finally { if (version == requestVersion) isLoading = false }
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(selectedSeverityFilter) {
+        events = emptyList()
+        totalCount = 0
+        page = 1
         loadEvents()
     }
 
-    val filteredEvents = remember(events, selectedSeverityFilter) {
-        if (selectedSeverityFilter == "ALL") {
-            events
-        } else {
-            events.filter { it.severity.equals(selectedSeverityFilter, ignoreCase = true) }
-        }
-    }
+    val filteredEvents = events
 
     Scaffold(
         topBar = {
@@ -92,6 +102,7 @@ fun EventsScreen(
                 actions = {
                     IconButton(
                         onClick = { loadEvents() },
+                        enabled = !isLoading,
                         modifier = Modifier.testTag("events_refresh_button")
                     ) {
                         Icon(
@@ -113,24 +124,30 @@ fun EventsScreen(
                 .padding(innerPadding)
         ) {
             // Severity filter chips
-            Row(
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(PureWhite)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("ALL", "INFO", "WARNING", "ERROR", "CRITICAL").forEach { severity ->
+                listOf("ALL", "INFO", "WARN", "ERROR", "CRITICAL").forEach { severity ->
                     FilterChip(
                         selected = selectedSeverityFilter == severity,
                         onClick = { selectedSeverityFilter = severity },
-                        label = { Text(severity, style = MaterialTheme.typography.labelSmall) },
+                        label = { Text(if (severity == "WARN") "Warning" else severity.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelSmall) },
                         modifier = Modifier.testTag("severity_filter_$severity")
                     )
                 }
             }
 
             HorizontalDivider(color = BorderHairline, thickness = 1.dp)
+            if (isLoading && events.isNotEmpty()) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (events.isNotEmpty()) Text("${events.size} of $totalCount events", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+            if (errorMessage != null && events.isNotEmpty()) {
+                Text(errorMessage!!, color = StatusRed, modifier = Modifier.padding(horizontal = 16.dp))
+                TextButton(enabled = !isLoading, onClick = { loadEvents() }) { Text("Retry refresh") }
+            }
 
             if (isLoading && events.isEmpty()) {
                 Box(
@@ -185,6 +202,11 @@ fun EventsScreen(
                     items(filteredEvents, key = { it.id }) { item ->
                         EventItemCard(item)
                     }
+                    if (events.size < totalCount) item {
+                        OutlinedButton(onClick = { loadEvents(append = true) }, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (isLoading) "Loading…" else "Load more events")
+                        }
+                    }
                 }
             }
         }
@@ -195,7 +217,7 @@ fun EventsScreen(
 private fun EventItemCard(event: SystemEvent) {
     val borderColor = when (event.severity.uppercase()) {
         "CRITICAL", "ERROR" -> StatusRedBorder
-        "WARNING" -> StatusAmberBorder
+        "WARN", "WARNING" -> StatusAmberBorder
         else -> BorderHairline
     }
 
@@ -242,7 +264,7 @@ private fun EventItemCard(event: SystemEvent) {
                     text = "Robot: ${event.robot_id}",
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
-                    color = Slate400
+                    color = Slate600
                 )
             }
         }

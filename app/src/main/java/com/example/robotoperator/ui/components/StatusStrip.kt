@@ -22,6 +22,7 @@ import com.example.robotoperator.data.model.safetyTelemetryContext
 import com.example.robotoperator.data.model.safetyTelemetryLabel
 import com.example.ui.theme.*
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StatusStrip(
     robotStatus: RobotStatus,
@@ -40,18 +41,17 @@ fun StatusStrip(
             .fillMaxWidth()
             .background(Slate900)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // Left Group: Online indicator + Live status + Control Mode + Safety
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f, fill = false)
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 // Online/Offline pill
                 Row(
@@ -81,7 +81,7 @@ fun StatusStrip(
                     Text(
                         text = connectionState,
                         color = PureWhite,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -93,14 +93,14 @@ fun StatusStrip(
                     modifier = Modifier
                         .defaultMinSize(minHeight = 48.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .clickable(enabled = canAdministerRobot, onClick = onModeClick)
+                        .clickable(enabled = canAdministerRobot, role = androidx.compose.ui.semantics.Role.Button, onClick = onModeClick)
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                         .testTag("mode_selector_button")
                 ) {
                     Text(
                         text = "MODE:",
                         color = Slate400,
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Normal,
                         fontFamily = FontFamily.Monospace
                     )
@@ -112,7 +112,7 @@ fun StatusStrip(
                             "STOPPED" -> StatusAmber
                             else -> PureWhite
                         },
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -131,7 +131,7 @@ fun StatusStrip(
                             "EMERGENCY_STOP" -> StatusRed
                             else -> Slate400
                         },
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -152,7 +152,7 @@ fun StatusStrip(
                     Text(
                         text = if (isLiveConnected) "LIVE" else "DISCONNECTED",
                         color = if (isLiveConnected) Slate400 else StatusAmber,
-                        fontSize = 9.sp,
+                        fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -165,14 +165,14 @@ fun StatusStrip(
                     .defaultMinSize(minWidth = 72.dp, minHeight = 48.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(StatusRed)
-                    .clickable(onClick = onEStopClick)
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEStopClick)
                     .padding(horizontal = 12.dp, vertical = 8.dp)
                     .testTag("e_stop_pinned_button")
             ) {
                 Text(
                     text = "REQ E-STOP",
                     color = PureWhite,
-                    fontSize = 10.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 1.sp
@@ -182,7 +182,7 @@ fun StatusStrip(
         Text(
             text = "Last seen: ${robotStatus.last_seen ?: "unknown"}. ${safetyTelemetryContext(connectionState, isLiveConnected)}",
             color = Slate400,
-            fontSize = 9.sp,
+            fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 5.dp)
         )
