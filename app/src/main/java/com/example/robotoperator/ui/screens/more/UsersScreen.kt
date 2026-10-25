@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,9 +23,7 @@ import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -61,7 +58,6 @@ fun UsersScreen(
     var newRobotName by rememberSaveable { mutableStateOf("") }
     var isCreatingRobot by remember { mutableStateOf(false) }
     var provisionedRobot by remember { mutableStateOf<ProvisionedRobot?>(null) }
-    val clipboardManager = LocalClipboardManager.current
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var newEmail by rememberSaveable { mutableStateOf("") }
@@ -397,35 +393,11 @@ fun UsersScreen(
         provisionedRobot?.let { robot ->
             AlertDialog(
                 onDismissRequest = { provisionedRobot = null },
-                title = { Text("Save robot gateway key now") },
+                title = { Text("Robot created") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(robot.name + " was created offline. The raw key cannot be retrieved again.")
-                        Text("Robot ID: " + robot.id, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                        SelectionContainer {
-                            Text(robot.api_key, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                        }
-                        Text(
-                            "Copy this key directly into the authorized gateway's protected secret configuration. Do not share it in chat or logs.",
-                            fontSize = 12.sp,
-                            color = Slate600
-                        )
-                    }
+                    Text("${robot.name} was created. Its gateway credential is managed outside the mobile app.")
                 },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(robot.api_key))
-                        },
-                        modifier = Modifier.testTag("copy_robot_key_button")
-                    ) { Text("Copy key") }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = { provisionedRobot = null },
-                        modifier = Modifier.testTag("dismiss_robot_key_button")
-                    ) { Text("Done") }
-                }
+                confirmButton = { TextButton(onClick = { provisionedRobot = null }) { Text("Done") } }
             )
         }
 
@@ -772,7 +744,7 @@ fun UserDetailDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                     Text(
                                         text = "Robot ${robot.robot_id.take(8)}",
                                         fontSize = 13.sp,
@@ -806,6 +778,7 @@ fun UserDetailDialog(
                                         }
                                     },
                                     enabled = !isOperating,
+                                    modifier = Modifier.testTag("revoke_robot_${robot.robot_id}"),
                                     colors = ButtonDefaults.textButtonColors(contentColor = StatusRed)
                                 ) {
                                     Text("Revoke", fontSize = 12.sp)

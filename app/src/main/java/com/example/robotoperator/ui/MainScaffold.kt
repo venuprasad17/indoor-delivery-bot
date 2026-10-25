@@ -33,6 +33,7 @@ import com.example.robotoperator.ui.screens.mapping.MappingDetailScreen
 import com.example.robotoperator.ui.screens.mapping.LiveMappingConsoleScreen
 import com.example.robotoperator.ui.screens.mapping.MappingListScreen
 import com.example.robotoperator.ui.screens.more.EventsScreen
+import com.example.robotoperator.ui.screens.more.DemoScreen
 import com.example.robotoperator.ui.screens.more.MoreScreen
 import com.example.robotoperator.ui.screens.more.UsersScreen
 import com.example.robotoperator.ui.screens.server.ServerSettingsScreen
@@ -58,6 +59,7 @@ sealed class SubScreen {
     object Events : SubScreen()
     object Users : SubScreen()
     object ServerSettings : SubScreen()
+    object Demo : SubScreen()
 }
 
 @Composable
@@ -302,6 +304,7 @@ fun MainScaffold(
                         onSaved = { currentSubScreen = SubScreen.None }
                     )
                 }
+                is SubScreen.Demo -> DemoScreen(apiClient = apiClient, onNavigateBack = { currentSubScreen = SubScreen.None })
                 is SubScreen.None -> {
                     when (currentTab) {
                         MainTab.DASHBOARD -> {
@@ -374,7 +377,8 @@ fun MainScaffold(
                                 onLoggedOut = onLoggedOut,
                                 onNavigateToMapping = { if (isAdmin) currentTab = MainTab.MAPPING },
                                 onNavigateToConsole = { if (isAdmin) currentTab = MainTab.LIVE_CONSOLE },
-                                onNavigateToDestinations = { if (isAdmin) currentTab = MainTab.DESTINATIONS }
+                                onNavigateToDestinations = { if (isAdmin) currentTab = MainTab.DESTINATIONS },
+                                onNavigateToDemo = { if (isAdmin) currentSubScreen = SubScreen.Demo }
                             )
                         }
                     }

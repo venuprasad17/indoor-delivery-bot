@@ -124,6 +124,9 @@ interface ApiService {
     @POST("deliveries/{id}/confirm-pickup")
     suspend fun confirmPickupDelivery(@Path("id") id: String): Delivery
 
+    @POST("deliveries/{id}/confirm-loading")
+    suspend fun confirmLoadingDelivery(@Path("id") id: String): Delivery
+
     @POST("deliveries/{id}/cancel")
     suspend fun cancelDelivery(@Path("id") id: String): Delivery
 

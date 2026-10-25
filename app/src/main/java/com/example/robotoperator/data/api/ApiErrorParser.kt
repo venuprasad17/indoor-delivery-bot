@@ -62,7 +62,7 @@ object ApiErrorParser {
             }
             is IOException -> {
                 ParsedError(
-                    message = "Cannot reach server. Retrying.",
+                    message = "Cannot reach server. Check the connection and retry.",
                     statusCode = -1
                 )
             }

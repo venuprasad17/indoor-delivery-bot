@@ -986,7 +986,10 @@ private fun CameraStreamView(
                 }
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedSslError(view: WebView?, handler: android.webkit.SslErrorHandler?, error: android.net.http.SslError?) {
-                        handler?.proceed()
+                        // Never bypass certificate validation for a live camera stream.
+                        // The operator can use HTTP for a local development camera or fix
+                        // the certificate on an HTTPS camera endpoint.
+                        handler?.cancel()
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {

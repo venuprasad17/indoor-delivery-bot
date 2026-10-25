@@ -39,6 +39,7 @@ import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.SocketTimeoutException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,12 +90,14 @@ fun DeliveryDetailScreen(
             title = { Text(when(action) {
                 DeliveryAction.DISPATCH -> "Request dispatch?"
                 DeliveryAction.CONFIRM_PICKUP -> "Confirm package received?"
+                DeliveryAction.CONFIRM_LOADING -> "Confirm package loaded?"
                 DeliveryAction.CANCEL -> "Request cancellation?"
             }) },
             text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(when(action) {
-                    DeliveryAction.DISPATCH -> "Check the destination and loading before requesting dispatch. The backend may report navigation unavailable."
-                    DeliveryAction.CONFIRM_PICKUP -> "Confirm only after the package has been collected. This requests the robot’s return journey."
+                    DeliveryAction.DISPATCH -> "Check pickup and destination before requesting travel to the pickup location. Confirm loading when the robot arrives there."
+                    DeliveryAction.CONFIRM_LOADING -> "Confirm only after loading the package at the selected pickup location. This requests travel to the destination."
+                    DeliveryAction.CONFIRM_PICKUP -> "Confirm only after the package has been collected. The backend will record pickup; an operator handles any physical repositioning."
                     DeliveryAction.CANCEL -> "This requests cancellation. It does not confirm the robot has physically stopped."
                 })
                 if (!stillAvailable) Text("The delivery state has changed. Close this dialog to review it.")
@@ -108,10 +111,13 @@ fun DeliveryDetailScreen(
                         delivery = when(action) {
                             DeliveryAction.DISPATCH -> apiClient.getService().dispatchDelivery(deliveryId)
                             DeliveryAction.CONFIRM_PICKUP -> apiClient.getService().confirmPickupDelivery(deliveryId)
+                            DeliveryAction.CONFIRM_LOADING -> apiClient.getService().confirmLoadingDelivery(deliveryId)
                             DeliveryAction.CANCEL -> apiClient.getService().cancelDelivery(deliveryId)
                         }
                         pendingAction = null
                     } catch (e: CancellationException) { throw e
+                    } catch (e: SocketTimeoutException) {
+                        actionError = "Connection timed out while the robot was active. Its current state is unknown; check the dashboard before retrying."
                     } catch (e: Exception) { actionError = ApiErrorParser.parse(e).message
                     } finally { isExecutingAction = false }
                 }
@@ -326,7 +332,7 @@ fun DeliveryDetailScreen(
                         }
                         if (lifecycleCompleted) {
                             Text(
-                                text = "Delivery lifecycle completed after returning HOME; backend state is IDLE.",
+                                    text = "Delivery reached its destination. Any physical repositioning is handled by an operator.",
                                 fontSize = 11.sp,
                                 color = StatusGreen,
                                 fontWeight = FontWeight.SemiBold
@@ -379,11 +385,13 @@ fun DeliveryDetailScreen(
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(when(action) {
                                     DeliveryAction.DISPATCH -> "dispatch_delivery_button"
                                     DeliveryAction.CONFIRM_PICKUP -> "confirm_pickup_button"
+                                    DeliveryAction.CONFIRM_LOADING -> "confirm_loading_button"
                                     DeliveryAction.CANCEL -> "cancel_delivery_button"
                                 })
                             ) { Text(when(action) {
                                 DeliveryAction.DISPATCH -> "Request dispatch"
                                 DeliveryAction.CONFIRM_PICKUP -> "Confirm package received"
+                                DeliveryAction.CONFIRM_LOADING -> "Confirm package loaded"
                                 DeliveryAction.CANCEL -> "Request cancellation"
                             }) }
                         }
@@ -422,6 +430,7 @@ fun DeliveryDetailScreen(
                         HorizontalDivider(thickness = 1.dp, color = BorderHairline)
 
                         KeyValRow(label = "Delivery ID", value = d.id, isMonospace = true)
+                        KeyValRow(label = "Pickup / Source", value = d.source_name ?: d.source_id ?: "Not recorded (legacy delivery)")
                         if (!d.robot_id.isNullOrBlank()) {
                             KeyValRow(label = "Robot ID", value = d.robot_id, isMonospace = true)
                         }

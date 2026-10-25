@@ -22,10 +22,10 @@ fun StatusBadge(
 ) {
     val cleanStatus = status.trim().uppercase()
     val (bgColor, textColor, borderColor) = when (cleanStatus) {
-        "ONLINE", "OK", "TRACKING", "SAFE", "COMPLETED", "ACTIVE" ->
+        "ONLINE", "OK", "TRACKING", "SAFE", "COMPLETED", "ACTIVE", "GO_TO_SOURCE", "GO_TO_DESTINATION" ->
             Triple(StatusGreenBg, Color(0xFF166534), StatusGreenBorder)
 
-        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING", "WARN", "STALE" ->
+        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING", "WARN", "STALE", "AT_SOURCE", "ARRIVED" ->
             Triple(StatusAmberBg, Color(0xFF92400E), StatusAmberBorder)
 
         "EMERGENCY_STOP", "STOP", "LOST", "FAULT", "CANCELLED", "FAILED", "ERROR", "CRITICAL" ->

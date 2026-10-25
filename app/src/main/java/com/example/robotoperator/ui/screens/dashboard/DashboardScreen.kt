@@ -32,6 +32,7 @@ import com.example.robotoperator.data.model.safetyTelemetryContext
 import com.example.robotoperator.data.model.safetyTelemetryLabel
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.RobotStateHolder
+import com.example.robotoperator.state.DashboardConnectionState
 import com.example.robotoperator.ui.components.KeyValRow
 import com.example.robotoperator.ui.components.PosePlotCanvas
 import com.example.robotoperator.ui.components.StatusBadge
@@ -55,6 +56,7 @@ fun DashboardScreen(
     val currentPose by stateHolder.currentPose.collectAsState()
     val poseTrail by stateHolder.poseTrail.collectAsState()
     val isLiveConnected by stateHolder.isLiveConnected.collectAsState()
+    val dashboardConnectionState by stateHolder.dashboardConnectionState.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     var restError by remember { mutableStateOf<String?>(null) }
@@ -115,7 +117,12 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Live updates disconnected. Refresh to request the latest status.",
+                        text = when (dashboardConnectionState) {
+                            DashboardConnectionState.CONNECTING -> "Connecting to live dashboard…"
+                            DashboardConnectionState.RECONNECTING -> "Live dashboard disconnected. Reconnecting…"
+                            DashboardConnectionState.AUTH_REQUIRED -> "Dashboard authorization is required. Sign in again."
+                            else -> "Live updates disconnected. Refresh to request the latest status."
+                        },
                         modifier = Modifier.weight(1f).padding(end = 8.dp),
                         fontSize = 12.sp,
                         color = StatusAmber,

@@ -5,6 +5,7 @@ import com.example.robotoperator.data.model.Pose
 import com.example.robotoperator.data.model.RobotStatus
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.RobotStateHolder
+import com.example.robotoperator.state.DashboardConnectionState
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.*
@@ -44,6 +45,7 @@ class DashboardWebSocketClient(
     fun start() {
         isStarted.set(true)
         reconnectBackoff.reset()
+        stateHolder.setDashboardConnectionState(DashboardConnectionState.CONNECTING)
         connect()
     }
 
@@ -69,6 +71,7 @@ class DashboardWebSocketClient(
 
     private fun connect() {
         if (!isStarted.get()) return
+        stateHolder.setDashboardConnectionState(DashboardConnectionState.CONNECTING)
         reconnectJob = coroutineScope.launch {
             val request = try {
                 Request.Builder()
@@ -97,7 +100,7 @@ class DashboardWebSocketClient(
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                stateHolder.setLiveConnected(true)
+                stateHolder.setDashboardConnectionState(DashboardConnectionState.CONNECTED)
                 stableConnectionJob?.cancel()
                 stableConnectionJob = coroutineScope.launch {
                     delay(30_000L)
@@ -111,18 +114,18 @@ class DashboardWebSocketClient(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 stableConnectionJob?.cancel()
-                stateHolder.setLiveConnected(false)
+                stateHolder.setDashboardConnectionState(DashboardConnectionState.RECONNECTING)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 stableConnectionJob?.cancel()
-                stateHolder.setLiveConnected(false)
+                stateHolder.setDashboardConnectionState(DashboardConnectionState.RECONNECTING)
                 handleDisconnection(code)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 stableConnectionJob?.cancel()
-                stateHolder.setLiveConnected(false)
+                stateHolder.setDashboardConnectionState(DashboardConnectionState.RECONNECTING)
                 val code = response?.code ?: 0
                 if (code == 401 || code == 403) {
                     if (code == 403) {
@@ -155,12 +158,13 @@ class DashboardWebSocketClient(
 
     private fun scheduleReconnect() {
         if (!isStarted.get()) return
+        stateHolder.setDashboardConnectionState(DashboardConnectionState.RECONNECTING)
         val delayMs = reconnectBackoff.nextDelayMs()
         if (delayMs == null) {
             isStarted.set(false)
             webSocket?.cancel()
             webSocket = null
-            stateHolder.setLiveConnected(false)
+            stateHolder.setDashboardConnectionState(DashboardConnectionState.DISCONNECTED)
             return
         }
         reconnectJob?.cancel()
@@ -175,7 +179,7 @@ class DashboardWebSocketClient(
         reconnectJob?.cancel()
         webSocket?.cancel()
         webSocket = null
-        stateHolder.setLiveConnected(false)
+        stateHolder.setDashboardConnectionState(DashboardConnectionState.AUTH_REQUIRED)
         onAuthenticationRequired?.invoke(message)
     }
 

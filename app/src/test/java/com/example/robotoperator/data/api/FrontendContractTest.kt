@@ -29,6 +29,13 @@ class FrontendContractTest {
     private val moshi = Moshi.Builder().build()
 
     @Test
+    fun connectionFailureRequestsRetryWithoutClaimingAnAutomaticRetry() {
+        val message = ApiErrorParser.parse(java.io.IOException("connection refused")).message
+        assertTrue(message.contains("retry", ignoreCase = true))
+        assertFalse(message.contains("retrying", ignoreCase = true))
+    }
+
+    @Test
     fun parsesDedicatedModeResponseContract() {
         val response = moshi.adapter(ModeResponse::class.java)
             .fromJson("""{"mode":"AUTONOMOUS","safety_state":"SAFE"}""")!!

@@ -3,6 +3,7 @@ package com.example.robotoperator.data.model
 enum class DeliveryAction {
     DISPATCH,
     CONFIRM_PICKUP,
+    CONFIRM_LOADING,
     CANCEL
 }
 
@@ -24,7 +25,7 @@ fun isDeliveryActionVisible(role: String?, action: DeliveryAction): Boolean {
     if (role.isNullOrBlank()) return false
     return when (action) {
         DeliveryAction.DISPATCH, DeliveryAction.CANCEL -> isAdministratorRole(role)
-        DeliveryAction.CONFIRM_PICKUP -> true // Backend additionally enforces requester ownership.
+        DeliveryAction.CONFIRM_PICKUP, DeliveryAction.CONFIRM_LOADING -> true // Backend additionally enforces requester ownership.
     }
 }
 

@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+enum class DashboardConnectionState { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, AUTH_REQUIRED }
+
 class RobotStateHolder {
 
     private val _robotStatus = MutableStateFlow(RobotStatus())
@@ -21,6 +23,8 @@ class RobotStateHolder {
 
     private val _isLiveConnected = MutableStateFlow(false)
     val isLiveConnected: StateFlow<Boolean> = _isLiveConnected.asStateFlow()
+    private val _dashboardConnectionState = MutableStateFlow(DashboardConnectionState.DISCONNECTED)
+    val dashboardConnectionState: StateFlow<DashboardConnectionState> = _dashboardConnectionState.asStateFlow()
 
     private val _emergencyStopError = MutableStateFlow<String?>(null)
     val emergencyStopError: StateFlow<String?> = _emergencyStopError.asStateFlow()
@@ -100,6 +104,7 @@ class RobotStateHolder {
 
     fun setLiveConnected(connected: Boolean) {
         _isLiveConnected.value = connected
+        _dashboardConnectionState.value = if (connected) DashboardConnectionState.CONNECTED else DashboardConnectionState.DISCONNECTED
         if (!connected) {
             // Losing the dashboard feed invalidates the last client-side observation. This does
             // not mean the physical robot is offline; wait for a new backend snapshot/event.
@@ -111,6 +116,11 @@ class RobotStateHolder {
                 }
             }
         }
+    }
+
+    fun setDashboardConnectionState(state: DashboardConnectionState) {
+        _dashboardConnectionState.value = state
+        _isLiveConnected.value = state == DashboardConnectionState.CONNECTED
     }
 
     fun setEmergencyStopError(message: String?) {

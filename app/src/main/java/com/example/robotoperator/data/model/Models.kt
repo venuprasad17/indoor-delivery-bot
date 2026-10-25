@@ -71,7 +71,6 @@ data class CreateRobotRequest(val name: String)
 data class ProvisionedRobot(
     val id: String,
     val name: String,
-    val api_key: String,
     val status: String,
     val created_at: String
 )
@@ -176,6 +175,7 @@ data class Destination(
     val y: Double,
     val theta: Double = 0.0,
     val map_id: String? = null,
+    val robot_id: String? = null,
     val is_home: Boolean = false,
     val created_at: String? = null,
     val updated_at: String? = null
@@ -220,9 +220,11 @@ data class DeliveryHistoryItem(
 @JsonClass(generateAdapter = true)
 data class Delivery(
     val id: String,
-    val status: String = "IDLE", // IDLE | GO_TO_DESTINATION | ARRIVED | DELIVERED | RETURN_HOME | HOME | EMERGENCY_STOP
+    val status: String = "IDLE", // IDLE | GO_TO_DESTINATION | ARRIVED | EMERGENCY_STOP; unknown backend states remain visible
     val history: List<DeliveryHistoryItem> = emptyList(),
     val robot_id: String? = null,
+    val source_id: String? = null,
+    val source_name: String? = null,
     val destination_id: String? = null,
     val destination_name: String? = null,
     val created_at: String? = null,
@@ -236,7 +238,8 @@ data class Delivery(
 @JsonClass(generateAdapter = true)
 data class CreateDeliveryRequest(
     val destination_id: String,
-    val robot_id: String
+    val robot_id: String,
+    val source_id: String
 )
 
 // Events (Audit log)

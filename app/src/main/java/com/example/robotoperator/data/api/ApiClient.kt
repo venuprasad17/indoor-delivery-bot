@@ -45,7 +45,15 @@ class ApiClient(private val settingsStore: ServerSettingsStore) {
                 if (!token.isNullOrBlank() && original.header("Authorization") == null) {
                     requestBuilder.header("Authorization", "Bearer $token")
                 }
-                chain.proceed(requestBuilder.build())
+                val request = requestBuilder.build()
+                val longRunningDeliveryCall = request.url.encodedPath.matches(
+                    Regex(".*/deliveries/[^/]+/(dispatch|confirm-pickup|confirm-loading)")
+                )
+                if (longRunningDeliveryCall) {
+                    chain.withReadTimeout(130, TimeUnit.SECONDS).proceed(request)
+                } else {
+                    chain.proceed(request)
+                }
             }
             .authenticator { _, response ->
                 if (responseCount(response) >= 2) {
