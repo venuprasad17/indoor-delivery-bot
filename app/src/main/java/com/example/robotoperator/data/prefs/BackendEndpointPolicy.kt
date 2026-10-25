@@ -9,16 +9,15 @@ enum class BackendEnvironment(val label: String) {
 }
 
 /**
- * Normalizes a backend URL and permits cleartext only for explicit local development targets.
- * 10.0.2.2 is Android Emulator's host-loopback alias; it is not a general LAN allowlist.
+ * Normalizes a backend URL and permits cleartext only for development targets.
  */
 internal fun validateBackendEndpoint(raw: String, environment: BackendEnvironment): String {
     val input = raw.trim()
-    require(input.isNotBlank()) { "Enter a backend HTTPS URL." }
+    require(input.isNotBlank()) { "Enter a backend URL." }
 
     val withScheme = if (input.contains("://")) input else "https://$input"
     val url = withScheme.toHttpUrlOrNull()
-        ?: throw IllegalArgumentException("Enter a valid backend URL using HTTPS.")
+        ?: throw IllegalArgumentException("Enter a valid backend URL.")
     require(url.username.isEmpty() && url.password.isEmpty()) {
         "Backend URLs must not contain credentials."
     }
@@ -27,9 +26,8 @@ internal fun validateBackendEndpoint(raw: String, environment: BackendEnvironmen
     }
 
     if (url.scheme == "http") {
-        val localDevelopmentHost = url.host in setOf("localhost", "127.0.0.1", "10.0.2.2")
-        require(environment == BackendEnvironment.DEVELOPMENT && localDevelopmentHost) {
-            "HTTP is allowed only for Development on localhost, 127.0.0.1, or Android Emulator host 10.0.2.2."
+        require(environment == BackendEnvironment.DEVELOPMENT) {
+            "HTTP is allowed only for Development."
         }
     } else {
         require(url.scheme == "https") { "Backend endpoints must use HTTPS." }

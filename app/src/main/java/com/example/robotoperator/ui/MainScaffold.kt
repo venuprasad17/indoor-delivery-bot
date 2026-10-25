@@ -177,7 +177,13 @@ fun MainScaffold(
                     onModeClick = {
                         modeErrorMessage = null
                         showModeDialog = true
-                    }
+                    },
+                    onOpenWifiClick = if (currentSubScreen is SubScreen.None) {
+                        {
+                            currentTab = MainTab.LIVE_CONSOLE
+                            openRobotConnectionOnConsole = true
+                        }
+                    } else null
                 )
 
                 if (isAdmin && (robotStatus.safety_state.equals("EMERGENCY_STOP", ignoreCase = true) || emergencyStopError != null)) {
@@ -206,18 +212,6 @@ fun MainScaffold(
                             }
                         }
                     )
-                }
-
-                if (isAdmin && currentSubScreen is SubScreen.None) {
-                    TextButton(
-                        onClick = {
-                            currentTab = MainTab.LIVE_CONSOLE
-                            openRobotConnectionOnConsole = true
-                        },
-                        modifier = Modifier.fillMaxWidth().testTag("open_robot_wifi_settings")
-                    ) {
-                        Text("ROBOT WI-FI · IP / PORT")
-                    }
                 }
             }
         },
@@ -319,7 +313,11 @@ fun MainScaffold(
                                 onOpenModeDialog = {
                                     modeErrorMessage = null
                                     if (isAdmin) showModeDialog = true
-                                }
+                                },
+                                onNavigateToConsole = { currentTab = MainTab.LIVE_CONSOLE },
+                                onNavigateToMapping = { currentTab = MainTab.MAPPING },
+                                onNavigateToDestinations = { currentTab = MainTab.DESTINATIONS },
+                                onNavigateToDeliveries = { currentTab = MainTab.DELIVERIES }
                             )
                         }
                         MainTab.MAPPING -> {

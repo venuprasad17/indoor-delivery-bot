@@ -14,7 +14,32 @@ class ServerSettingsStore(context: Context) {
         private const val KEY_SELECTED_ENVIRONMENT = "selected_backend_environment"
         private const val KEY_CACHED_ROBOT_ID = "cached_robot_id"
         private const val KEY_ACTIVE_SESSION_ID = "active_session_id"
+        private const val KEY_ROBOT_WIFI_IP = "robot_wifi_ip"
+        private const val KEY_ROBOT_WIFI_PORT = "robot_wifi_port"
+        private const val KEY_CAMERA_IP = "robot_camera_ip"
+        private const val KEY_CAMERA_PORT = "robot_camera_port"
+        private const val KEY_CAMERA_STREAM_URL = "robot_camera_stream_url"
     }
+
+    var robotWifiIp: String?
+        get() = prefs.getString(KEY_ROBOT_WIFI_IP, null)
+        set(value) = prefs.edit().putString(KEY_ROBOT_WIFI_IP, value).apply()
+
+    var robotWifiPort: String
+        get() = prefs.getString(KEY_ROBOT_WIFI_PORT, "9090") ?: "9090"
+        set(value) = prefs.edit().putString(KEY_ROBOT_WIFI_PORT, value).apply()
+
+    var cameraIp: String?
+        get() = prefs.getString(KEY_CAMERA_IP, null)
+        set(value) = prefs.edit().putString(KEY_CAMERA_IP, value).apply()
+
+    var cameraPort: String
+        get() = prefs.getString(KEY_CAMERA_PORT, "8080") ?: "8080"
+        set(value) = prefs.edit().putString(KEY_CAMERA_PORT, value).apply()
+
+    var cameraStreamUrl: String?
+        get() = prefs.getString(KEY_CAMERA_STREAM_URL, null)
+        set(value) = prefs.edit().putString(KEY_CAMERA_STREAM_URL, value).apply()
 
     private fun environmentKey(environment: BackendEnvironment) = "backend_url_${environment.name.lowercase()}"
 

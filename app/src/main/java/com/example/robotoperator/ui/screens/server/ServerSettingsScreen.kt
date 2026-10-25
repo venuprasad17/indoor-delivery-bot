@@ -147,7 +147,7 @@ fun ServerSettingsScreen(
                     selectedEnvironment?.let { environment ->
                         Text(
                             text = when (environment) {
-                                BackendEnvironment.DEVELOPMENT -> "HTTPS is preferred. HTTP is allowed only for localhost, 127.0.0.1, or Android Emulator host 10.0.2.2."
+                                BackendEnvironment.DEVELOPMENT -> "HTTPS is preferred. HTTP is allowed for Development."
                                 BackendEnvironment.STAGING -> "Staging endpoints must use HTTPS."
                                 BackendEnvironment.PRODUCTION -> "Production endpoints must use HTTPS. Saving this selection enables production access."
                             },
@@ -168,7 +168,7 @@ fun ServerSettingsScreen(
                         placeholder = {
                             Text(
                                 if (selectedEnvironment == BackendEnvironment.DEVELOPMENT)
-                                    "https://dev.example or http://10.0.2.2:8000"
+                                    "https://dev.example or http://192.168.1.100:8000"
                                 else "https://backend.example"
                             )
                         },

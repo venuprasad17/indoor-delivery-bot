@@ -17,8 +17,8 @@ Internal operations mobile application for the Autonomous Indoor Delivery Robot 
    - Fresh installs have no selected backend and make no network requests until an operator selects and saves an environment endpoint.
    - Development, Staging, and Production are selected explicitly in Server Settings. Production is never selected automatically.
    - Optional non-secret endpoint suggestions can be supplied with Gradle properties or environment variables named `DEVELOPMENT_BACKEND_URL`, `STAGING_BACKEND_URL`, and `PRODUCTION_BACKEND_URL`. All default to empty. A supplied suggestion does not select that environment.
-   - Staging and Production require HTTPS. Development permits HTTP only for `localhost`, `127.0.0.1`, or Android Emulator host alias `10.0.2.2`; arbitrary LAN and remote HTTP endpoints are rejected.
-   - Dashboard URLs derive `wss://` from HTTPS. The loopback Development exception derives `ws://` only for the explicitly allowed local hosts. Cleartext is disabled by default in the Android manifest and narrowly permitted for those local development domains.
+   - Staging and Production require HTTPS. Development permits HTTP for development hosts and IP addresses (e.g. `localhost`, `10.0.2.2`, LAN IP addresses such as `192.168.x.x`).
+   - Dashboard URLs derive `wss://` from HTTPS and `ws://` from HTTP in Development.
    - "Test connection" verifies `GET /health` (`{"status":"ok"}`). Changing the endpoint while authenticated is disabled; sign out first so session credentials cannot be sent to a different backend.
 
 2. **Authentication**:

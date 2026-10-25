@@ -51,23 +51,24 @@ class DashboardConnectionSupportTest {
     }
 
     @Test
-    fun remoteHttpIsRejectedForEveryEnvironment() {
-        BackendEnvironment.entries.forEach { environment ->
+    fun httpIsRejectedForStagingAndProduction() {
+        listOf(BackendEnvironment.STAGING, BackendEnvironment.PRODUCTION).forEach { environment ->
             try {
                 validateBackendEndpoint("http://192.168.1.12:8000", environment)
-                throw AssertionError("Expected remote HTTP to be rejected for $environment")
+                throw AssertionError("Expected HTTP to be rejected for $environment")
             } catch (_: IllegalArgumentException) {
-                // Expected: cleartext is restricted to explicit local development.
+                // Expected: cleartext is restricted to development.
             }
         }
     }
 
     @Test
-    fun httpsIsAcceptedAndLocalHttpIsDevelopmentOnly() {
+    fun httpsIsAcceptedAndHttpIsDevelopmentOnly() {
         assertEquals("https://api.example.test", validateBackendEndpoint("https://api.example.test/", BackendEnvironment.STAGING))
         assertEquals("http://localhost:8000", validateBackendEndpoint("http://localhost:8000", BackendEnvironment.DEVELOPMENT))
         assertEquals("http://127.0.0.1:8000", validateBackendEndpoint("http://127.0.0.1:8000", BackendEnvironment.DEVELOPMENT))
         assertEquals("http://10.0.2.2:8000", validateBackendEndpoint("http://10.0.2.2:8000", BackendEnvironment.DEVELOPMENT))
+        assertEquals("http://192.168.1.12:8000", validateBackendEndpoint("http://192.168.1.12:8000", BackendEnvironment.DEVELOPMENT))
         try {
             validateBackendEndpoint("http://localhost:8000", BackendEnvironment.PRODUCTION)
             throw AssertionError("Production must reject HTTP, including loopback")
@@ -77,21 +78,15 @@ class DashboardConnectionSupportTest {
     }
 
     @Test
-    fun localDevelopmentHttpConvertsToWsAndRemoteHttpCannotAcquireTicket() = runBlocking {
+    fun developmentHttpConvertsToWs() = runBlocking {
         assertEquals(
             "ws://10.0.2.2:8000/ws/dashboard?ticket=dev-ticket",
             dashboardWebSocketUrl("http://10.0.2.2:8000", "dev-ticket", BackendEnvironment.DEVELOPMENT)
         )
-        var ticketRequested = false
-        try {
-            dashboardConnectionUrl("http://192.168.1.12:8000", BackendEnvironment.DEVELOPMENT) {
-                ticketRequested = true
-                "unused"
-            }
-            throw AssertionError("Expected remote HTTP WebSocket endpoint to be rejected")
-        } catch (_: IllegalArgumentException) {
-            assertFalse(ticketRequested)
-        }
+        assertEquals(
+            "ws://192.168.1.12:8000/ws/dashboard?ticket=dev-ticket",
+            dashboardWebSocketUrl("http://192.168.1.12:8000", "dev-ticket", BackendEnvironment.DEVELOPMENT)
+        )
     }
 
     @Test

@@ -2,17 +2,24 @@ package com.example.robotoperator.ui.screens.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -38,7 +45,11 @@ fun DashboardScreen(
     apiClient: ApiClient,
     settingsStore: ServerSettingsStore,
     canAdministerRobot: Boolean,
-    onOpenModeDialog: () -> Unit
+    onOpenModeDialog: () -> Unit,
+    onNavigateToConsole: (() -> Unit)? = null,
+    onNavigateToMapping: (() -> Unit)? = null,
+    onNavigateToDestinations: (() -> Unit)? = null,
+    onNavigateToDeliveries: (() -> Unit)? = null
 ) {
     val robotStatus by stateHolder.robotStatus.collectAsState()
     val currentPose by stateHolder.currentPose.collectAsState()
@@ -172,6 +183,71 @@ fun DashboardScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
+        if (canAdministerRobot) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "OPERATIONS SHORTCUTS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = Slate500
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    onNavigateToConsole?.let {
+                        QuickActionCard(
+                            title = "Console & Camera",
+                            subtitle = "Live video & teleop",
+                            icon = Icons.Default.Videocam,
+                            iconTint = ActionBlue,
+                            onClick = it,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    onNavigateToMapping?.let {
+                        QuickActionCard(
+                            title = "SLAM Mapping",
+                            subtitle = "Create & track maps",
+                            icon = Icons.Default.Map,
+                            iconTint = StatusGreen,
+                            onClick = it,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    onNavigateToDestinations?.let {
+                        QuickActionCard(
+                            title = "Destinations",
+                            subtitle = "Waypoints config",
+                            icon = Icons.Default.Place,
+                            iconTint = StatusAmber,
+                            onClick = it,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    onNavigateToDeliveries?.let {
+                        QuickActionCard(
+                            title = "Deliveries",
+                            subtitle = "Dispatches & missions",
+                            icon = Icons.Default.LocalShipping,
+                            iconTint = Slate700,
+                            onClick = it,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+
         Card(
             shape = RoundedCornerShape(6.dp),
             colors = CardDefaults.cardColors(containerColor = PureWhite),
@@ -302,3 +378,59 @@ fun DashboardScreen(
         }
     }
 }
+
+@Composable
+private fun QuickActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconTint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(6.dp),
+        colors = CardDefaults.cardColors(containerColor = PureWhite),
+        border = androidx.compose.foundation.BorderStroke(1.dp, BorderHairline),
+        modifier = modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(iconTint.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Slate900,
+                    maxLines = 1
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = Slate500,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
