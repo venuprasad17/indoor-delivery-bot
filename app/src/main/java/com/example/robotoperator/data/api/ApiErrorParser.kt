@@ -45,8 +45,8 @@ object ApiErrorParser {
                     return ParsedError(
                         message = when (code) {
                             400 -> "Bad request"
-                            401 -> "Authentication required"
-                            403 -> "This app is for administrators"
+                            401 -> "Authentication required or session expired (HTTP 401)"
+                            403 -> "You are not authorized to perform this action (HTTP 403)"
                             404 -> "Resource not found"
                             409 -> "Resource conflict"
                             422 -> "Unprocessable entity"
@@ -62,7 +62,7 @@ object ApiErrorParser {
             }
             is IOException -> {
                 ParsedError(
-                    message = "Cannot reach server. Retrying.",
+                    message = "Cannot reach server. Check the connection and retry.",
                     statusCode = -1
                 )
             }
@@ -126,6 +126,8 @@ object ApiErrorParser {
                 finalErrorCode == "INVALID_COORDINATES" -> "Invalid coordinates"
                 finalErrorCode == "HOME_PROTECTED" -> "Home destination is protected"
                 finalErrorCode == "ACTIVE_DELIVERY" -> "Cannot modify destination during active delivery"
+                statusCode == 401 -> "Authentication required or session expired (HTTP 401). Please sign in again."
+                statusCode == 403 -> "You are not authorized to perform this action (HTTP 403)."
                 statusCode == 423 -> "Robot locked because of emergency stop"
                 statusCode == 404 -> "Resource not found"
                 statusCode == 409 -> "Resource conflict"

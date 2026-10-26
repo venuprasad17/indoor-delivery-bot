@@ -22,11 +22,11 @@ fun StatusBadge(
 ) {
     val cleanStatus = status.trim().uppercase()
     val (bgColor, textColor, borderColor) = when (cleanStatus) {
-        "ONLINE", "OK", "TRACKING", "SAFE", "COMPLETED", "ACTIVE" ->
-            Triple(StatusGreenBg, StatusGreen, StatusGreenBorder)
+        "ONLINE", "OK", "TRACKING", "SAFE", "COMPLETED", "ACTIVE", "GO_TO_SOURCE", "GO_TO_DESTINATION" ->
+            Triple(StatusGreenBg, Color(0xFF166534), StatusGreenBorder)
 
-        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING" ->
-            Triple(StatusAmberBg, StatusAmber, StatusAmberBorder)
+        "PAUSED", "SLOW", "REPLAN", "RELOCATING", "WARNING", "WARN", "STALE", "AT_SOURCE", "ARRIVED" ->
+            Triple(StatusAmberBg, Color(0xFF92400E), StatusAmberBorder)
 
         "EMERGENCY_STOP", "STOP", "LOST", "FAULT", "CANCELLED", "FAILED", "ERROR", "CRITICAL" ->
             Triple(StatusRedBg, StatusRed, StatusRedBorder)
@@ -39,12 +39,12 @@ fun StatusBadge(
         modifier = modifier
             .border(1.dp, borderColor, RoundedCornerShape(4.dp))
             .background(bgColor, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Text(
-            text = cleanStatus,
+            text = cleanStatus.replace("_", " "),
             color = textColor,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             letterSpacing = 0.5.sp

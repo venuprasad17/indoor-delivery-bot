@@ -11,9 +11,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.ListAlt
+import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,11 +43,23 @@ fun MoreScreen(
     onNavigateToEvents: () -> Unit,
     onNavigateToUsers: () -> Unit,
     onNavigateToServerSettings: () -> Unit,
-    onLoggedOut: () -> Unit
+    onLoggedOut: () -> Unit,
+    onNavigateToMapping: () -> Unit,
+    onNavigateToConsole: () -> Unit,
+    onNavigateToDestinations: () -> Unit,
+    onNavigateToDemo: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
     val currentUser by authManager.currentUser.collectAsState()
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // Access grants can be changed by an admin while a USER session is open.
+    // Refresh when this screen becomes active so the user does not need to log out.
+    LaunchedEffect(currentUser?.id, currentUser?.role) {
+        if (currentUser?.role == "USER") {
+            authManager.refreshGrantedRobots()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -136,7 +152,7 @@ fun MoreScreen(
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Connected Server",
+                        text = "Configured server",
                         style = MaterialTheme.typography.labelSmall,
                         color = Slate500
                     )
@@ -173,6 +189,12 @@ fun MoreScreen(
         ) {
             Column {
                 if (isAdmin) {
+                    MoreMenuItem(Icons.Default.PlayCircleOutline, "Viva demo", "Live backend data and test checklist", "menu_demo", onNavigateToDemo)
+                    HorizontalDivider(color = BorderHairline)
+                    MoreMenuItem(Icons.Default.Map, "Mapping", "Create and inspect mapping sessions", "menu_mapping", onNavigateToMapping)
+                    MoreMenuItem(Icons.Default.Videocam, "Robot console", "Reported poses and robot connection settings", "menu_console", onNavigateToConsole)
+                    MoreMenuItem(Icons.Default.Place, "Destinations", "Manage map-linked delivery locations", "menu_destinations", onNavigateToDestinations)
+                    HorizontalDivider(color = BorderHairline)
                     MoreMenuItem(
                         icon = Icons.Default.ListAlt,
                         title = "System Events",

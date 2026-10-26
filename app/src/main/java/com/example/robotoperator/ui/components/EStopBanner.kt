@@ -21,6 +21,8 @@ import com.example.ui.theme.StatusRed
 @Composable
 fun EStopBanner(
     errorMessage: String?,
+    physicalExecutionConfirmed: Boolean?,
+    canReset: Boolean,
     isResetting: Boolean,
     onResetClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -42,28 +44,28 @@ fun EStopBanner(
             ) {
                 Icon(
                     imageVector = Icons.Default.Warning,
-                    contentDescription = "Emergency Stop Active",
+                    contentDescription = "Backend emergency-stop state",
                     tint = PureWhite,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Column {
                     Text(
-                        text = "EMERGENCY STOP ENGAGED",
+                        text = "BACKEND E-STOP STATE",
                         color = PureWhite,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
                     Text(
-                        text = "Robot actuators cut. Mode reset required.",
+                        text = "A backend stop request/state is recorded; physical execution is not implied.",
                         color = PureWhite.copy(alpha = 0.9f),
                         fontSize = 11.sp
                     )
                 }
             }
 
-            Button(
+            if (canReset) Button(
                 onClick = onResetClick,
                 enabled = !isResetting,
                 colors = ButtonDefaults.buttonColors(
@@ -91,6 +93,16 @@ fun EStopBanner(
                 }
             }
         }
+
+        Text(
+            text = "Physical execution confirmation: ${when (physicalExecutionConfirmed) {
+                true -> "confirmed by backend"
+                false -> "not confirmed"
+                null -> "not reported by backend"
+            }}",
+            color = PureWhite,
+            fontSize = 11.sp
+        )
 
         if (!errorMessage.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(6.dp))

@@ -9,6 +9,14 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+fun buildConfigLiteral(value: String): String =
+  "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+fun configuredEndpoint(name: String): String =
+  providers.gradleProperty(name)
+    .orElse(providers.environmentVariable(name))
+    .getOrElse("")
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -21,7 +29,9 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    buildConfigField("String", "BACKEND_URL", "\"https://indoor-delivery-bot.onrender.com\"")
+    buildConfigField("String", "DEVELOPMENT_BACKEND_URL", buildConfigLiteral(configuredEndpoint("DEVELOPMENT_BACKEND_URL")))
+    buildConfigField("String", "STAGING_BACKEND_URL", buildConfigLiteral(configuredEndpoint("STAGING_BACKEND_URL")))
+    buildConfigField("String", "PRODUCTION_BACKEND_URL", buildConfigLiteral(configuredEndpoint("PRODUCTION_BACKEND_URL")))
   }
 
   signingConfigs {
@@ -32,12 +42,6 @@ android {
       keyAlias = "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
   }
 
   buildTypes {
@@ -47,7 +51,6 @@ android {
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -70,7 +73,6 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
-  ignoreList.add("BACKEND_URL")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
+import com.example.robotoperator.data.prefs.BackendEnvironment
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -35,13 +37,28 @@ fun ServerSettingsScreen(
     settingsStore: ServerSettingsStore,
     apiClient: ApiClient,
     canNavigateBack: Boolean,
+    allowEndpointChanges: Boolean = true,
     onNavigateBack: () -> Unit,
     onSaved: () -> Unit
 ) {
-    var urlInput by remember { mutableStateOf(settingsStore.serverUrl) }
+    var selectedEnvironment by rememberSaveable { mutableStateOf(settingsStore.selectedEnvironment) }
+    var urlInput by rememberSaveable {
+        mutableStateOf(selectedEnvironment?.let(settingsStore::endpointFor).orEmpty())
+    }
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     val scope = rememberCoroutineScope()
+    val normalizedEndpoint = selectedEnvironment?.let { environment ->
+        runCatching { settingsStore.validateEndpoint(urlInput, environment) }.getOrNull()
+    }
+    val endpointError = when {
+        selectedEnvironment == null -> "Choose an environment before configuring an endpoint."
+        urlInput.isBlank() -> "Enter an HTTPS backend endpoint."
+        normalizedEndpoint == null -> runCatching {
+            settingsStore.validateEndpoint(urlInput, selectedEnvironment!!)
+        }.exceptionOrNull()?.message ?: "Endpoint is invalid for this environment."
+        else -> null
+    }
 
     Scaffold(
         topBar = {
@@ -98,11 +115,47 @@ fun ServerSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Robot Backend Address",
+                        text = "Backend Environment",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = Slate900
                     )
+
+                    Text(
+                        text = "No environment is used until you select it and save an endpoint. Production is never selected automatically.",
+                        fontSize = 12.sp,
+                        color = Slate500,
+                        lineHeight = 16.sp
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BackendEnvironment.entries.forEach { environment ->
+                            FilterChip(
+                                selected = selectedEnvironment == environment,
+                                onClick = {
+                                    selectedEnvironment = environment
+                                    urlInput = settingsStore.endpointFor(environment).orEmpty()
+                                    testResult = null
+                                },
+                                enabled = allowEndpointChanges,
+                                label = { Text(environment.label) },
+                                modifier = Modifier.testTag("environment_${environment.name.lowercase()}_chip")
+                            )
+                        }
+                    }
+
+                    selectedEnvironment?.let { environment ->
+                        Text(
+                            text = when (environment) {
+                                BackendEnvironment.DEVELOPMENT -> "HTTPS is preferred. HTTP is allowed for Development."
+                                BackendEnvironment.STAGING -> "Staging endpoints must use HTTPS."
+                                BackendEnvironment.PRODUCTION -> "Production endpoints must use HTTPS. Saving this selection enables production access."
+                            },
+                            fontSize = 12.sp,
+                            color = Slate500,
+                            lineHeight = 16.sp
+                        )
+                    }
 
                     OutlinedTextField(
                         value = urlInput,
@@ -110,8 +163,15 @@ fun ServerSettingsScreen(
                             urlInput = it
                             testResult = null
                         },
-                        label = { Text("Server address") },
-                        placeholder = { Text("https://indoor-delivery-bot.onrender.com") },
+                        enabled = allowEndpointChanges && selectedEnvironment != null,
+                        label = { Text("${selectedEnvironment?.label ?: "Backend"} endpoint") },
+                        placeholder = {
+                            Text(
+                                if (selectedEnvironment == BackendEnvironment.DEVELOPMENT)
+                                    "https://dev.example or http://192.168.1.100:8000"
+                                else "https://backend.example"
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Uri,
@@ -123,35 +183,30 @@ fun ServerSettingsScreen(
                             .testTag("server_url_input")
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = {
-                                urlInput = ServerSettingsStore.LIVE_RENDER_BACKEND
-                                testResult = null
-                            }
-                        ) {
-                            Text("Use Default Render Cloud", fontSize = 12.sp, color = ActionBlue)
-                        }
+                    if (endpointError != null) {
+                        Text(
+                            text = endpointError,
+                            color = StatusRed,
+                            fontSize = 12.sp
+                        )
                     }
 
-                    Text(
-                        text = "Live backend: https://indoor-delivery-bot.onrender.com\nDo not use localhost on Android emulator.",
-                        fontSize = 12.sp,
-                        color = Slate500,
-                        lineHeight = 16.sp
-                    )
+                    if (!allowEndpointChanges) {
+                        Text(
+                            text = "Sign out before changing backend environments. This prevents an authenticated session from being sent to a different server.",
+                            color = StatusAmber,
+                            fontSize = 12.sp
+                        )
+                    }
 
                     OutlinedButton(
                         onClick = {
                             scope.launch {
                                 isTesting = true
                                 testResult = null
-                                settingsStore.serverUrl = urlInput
                                 try {
+                                    val environment = requireNotNull(selectedEnvironment)
+                                    settingsStore.saveEndpoint(environment, urlInput)
                                     val health = apiClient.getService().checkHealth()
                                     if (health.status == "ok") {
                                         testResult = Pair(true, "Connected successfully (status: ok)")
@@ -166,7 +221,7 @@ fun ServerSettingsScreen(
                                 }
                             }
                         },
-                        enabled = urlInput.isNotBlank() && !isTesting,
+                        enabled = allowEndpointChanges && normalizedEndpoint != null && !isTesting,
                         shape = RoundedCornerShape(6.dp),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -220,10 +275,11 @@ fun ServerSettingsScreen(
 
             Button(
                 onClick = {
-                    settingsStore.serverUrl = urlInput
+                    val environment = selectedEnvironment ?: return@Button
+                    settingsStore.saveEndpoint(environment, urlInput)
                     onSaved()
                 },
-                enabled = urlInput.isNotBlank(),
+                enabled = allowEndpointChanges && normalizedEndpoint != null,
                 shape = RoundedCornerShape(6.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
                 modifier = Modifier

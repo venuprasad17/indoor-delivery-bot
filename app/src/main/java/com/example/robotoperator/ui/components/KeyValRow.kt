@@ -47,16 +47,19 @@ fun KeyValRow(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Normal,
                 color = Slate600,
-                modifier = Modifier.weight(1f, fill = false)
+                modifier = Modifier.weight(0.4f).padding(end = 12.dp)
             )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(0.6f),
                 horizontalArrangement = Arrangement.End
             ) {
                 if (value != null) {
                     Text(
                         text = value,
+                        modifier = Modifier.weight(1f, fill = false),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default,

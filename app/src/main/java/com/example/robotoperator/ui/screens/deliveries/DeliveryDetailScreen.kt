@@ -10,9 +10,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.example.robotoperator.data.model.isDeliveryActionAvailable
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,31 +28,49 @@ import androidx.compose.ui.unit.sp
 import com.example.robotoperator.data.api.ApiClient
 import com.example.robotoperator.data.api.ApiErrorParser
 import com.example.robotoperator.data.model.Delivery
+import com.example.robotoperator.data.model.DeliveryAction
+import com.example.robotoperator.data.model.deliveryProgressIndex
+import com.example.robotoperator.data.model.deliveryProgressSteps
+import com.example.robotoperator.data.model.isDeliveryActionVisible
+import com.example.robotoperator.data.model.isDeliveryLifecycleComplete
 import com.example.robotoperator.ui.components.KeyValRow
 import com.example.robotoperator.ui.components.StatusBadge
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.SocketTimeoutException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeliveryDetailScreen(
     deliveryId: String,
     apiClient: ApiClient,
+    userRole: String?,
     onNavigateBack: () -> Unit
 ) {
     var delivery by remember { mutableStateOf<Delivery?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+    var pendingAction by remember { mutableStateOf<DeliveryAction?>(null) }
     var isExecutingAction by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     suspend fun fetchDelivery() {
         try {
-            delivery = apiClient.getService().getDelivery(deliveryId)
-        } catch (t: Throwable) {
-            actionError = ApiErrorParser.parse(t).message
+            val fetched = apiClient.getService().getDelivery(deliveryId)
+            fetchError = null
+            val previous = delivery
+            delivery = fetched.copy(
+                physical_execution_confirmed = fetched.physical_execution_confirmed
+                    ?: previous?.physical_execution_confirmed,
+                cancellation_requested = fetched.cancellation_requested
+                    ?: previous?.cancellation_requested
+            )
+        } catch (e: CancellationException) { throw e
+        } catch (t: Exception) {
+            fetchError = ApiErrorParser.parse(t).message
         } finally {
             isLoading = false
         }
@@ -56,9 +78,52 @@ fun DeliveryDetailScreen(
 
     LaunchedEffect(deliveryId) {
         while (isActive) {
-            fetchDelivery()
+            if (!isExecutingAction) fetchDelivery()
             delay(3000)
         }
+    }
+
+    pendingAction?.let { action ->
+        val stillAvailable = delivery?.let { isDeliveryActionVisible(userRole, action) && isDeliveryActionAvailable(it, action) } == true
+        AlertDialog(
+            onDismissRequest = { if (!isExecutingAction) pendingAction = null },
+            title = { Text(when(action) {
+                DeliveryAction.DISPATCH -> "Request dispatch?"
+                DeliveryAction.CONFIRM_PICKUP -> "Confirm package received?"
+                DeliveryAction.CONFIRM_LOADING -> "Confirm package loaded?"
+                DeliveryAction.CANCEL -> "Request cancellation?"
+            }) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(when(action) {
+                    DeliveryAction.DISPATCH -> "Check pickup and destination before requesting travel to the pickup location. Confirm loading when the robot arrives there."
+                    DeliveryAction.CONFIRM_LOADING -> "Confirm only after loading the package at the selected pickup location. This requests travel to the destination."
+                    DeliveryAction.CONFIRM_PICKUP -> "Confirm only after the package has been collected. The backend will record pickup; an operator handles any physical repositioning."
+                    DeliveryAction.CANCEL -> "This requests cancellation. It does not confirm the robot has physically stopped."
+                })
+                if (!stillAvailable) Text("The delivery state has changed. Close this dialog to review it.")
+                actionError?.let { Text(it, color = StatusRed, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+            } },
+            confirmButton = { TextButton(enabled = stillAvailable && !isExecutingAction && fetchError == null, onClick = {
+                isExecutingAction = true
+                actionError = null
+                scope.launch {
+                    try {
+                        delivery = when(action) {
+                            DeliveryAction.DISPATCH -> apiClient.getService().dispatchDelivery(deliveryId)
+                            DeliveryAction.CONFIRM_PICKUP -> apiClient.getService().confirmPickupDelivery(deliveryId)
+                            DeliveryAction.CONFIRM_LOADING -> apiClient.getService().confirmLoadingDelivery(deliveryId)
+                            DeliveryAction.CANCEL -> apiClient.getService().cancelDelivery(deliveryId)
+                        }
+                        pendingAction = null
+                    } catch (e: CancellationException) { throw e
+                    } catch (e: SocketTimeoutException) {
+                        actionError = "Connection timed out while the robot was active. Its current state is unknown; check the dashboard before retrying."
+                    } catch (e: Exception) { actionError = ApiErrorParser.parse(e).message
+                    } finally { isExecutingAction = false }
+                }
+            }) { Text(if (isExecutingAction) "Sending…" else "Confirm") } },
+            dismissButton = { TextButton(enabled = !isExecutingAction, onClick = { pendingAction = null; actionError = null }) { Text("Back") } }
+        )
     }
 
     Scaffold(
@@ -115,7 +180,7 @@ fun DeliveryDetailScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = actionError ?: "Delivery not found",
+                        text = fetchError ?: "Delivery not found",
                         fontSize = 14.sp,
                         color = StatusRed
                     )
@@ -127,7 +192,7 @@ fun DeliveryDetailScreen(
             }
         } else {
             val d = delivery!!
-            val steps = listOf("IDLE", "GO_TO_DESTINATION", "ARRIVED", "DELIVERED", "RETURN_HOME", "HOME")
+            val steps = deliveryProgressSteps
 
             Column(
                 modifier = Modifier
@@ -178,12 +243,13 @@ fun DeliveryDetailScreen(
                         )
 
                         val currentStatus = d.status.uppercase()
-                        val currentIndex = steps.indexOf(currentStatus)
+                        val lifecycleCompleted = isDeliveryLifecycleComplete(d)
+                        val currentIndex = deliveryProgressIndex(d)
                         val isEmergency = currentStatus == "EMERGENCY_STOP"
 
                         steps.forEachIndexed { index, stepName ->
-                            val isCompleted = !isEmergency && currentIndex >= index
-                            val isCurrent = !isEmergency && currentIndex == index
+                            val isCompleted = !isEmergency && (lifecycleCompleted || currentIndex > index)
+                            val isCurrent = !isEmergency && !lifecycleCompleted && currentIndex == index
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -238,35 +304,48 @@ fun DeliveryDetailScreen(
                                         .padding(start = 11.dp)
                                         .width(2.dp)
                                         .height(16.dp)
-                                        .background(if (isCompleted && currentIndex > index) StatusGreen else BorderHairline)
+                                        .background(if (isCompleted) StatusGreen else BorderHairline)
                                 )
                             }
                         }
 
                         if (isEmergency) {
                             Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(StatusRedBg, RoundedCornerShape(4.dp))
                                     .padding(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = null,
-                                    tint = StatusRed,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Emergency Stop interrupted delivery",
+                                    text = "Delivery workflow stopped",
                                     fontSize = 12.sp,
                                     color = StatusRed,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                                Text(
+                                    text = "This backend delivery state does not confirm a physical emergency stop.",
+                                    fontSize = 11.sp,
+                                    color = StatusRed
+                                )
                             }
                         }
+                        if (lifecycleCompleted) {
+                            Text(
+                                    text = "Delivery reached its destination. Any physical repositioning is handled by an operator.",
+                                fontSize = 11.sp,
+                                color = StatusGreen,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else if (currentStatus == "IDLE" && !isEmergency) {
+                            Text("Delivery not started", fontSize = 11.sp, color = Slate500)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Progress is reported by the backend. A successful request does not confirm physical robot movement.",
+                            fontSize = 11.sp,
+                            color = Slate500
+                        )
                     }
                 }
 
@@ -292,85 +371,33 @@ fun DeliveryDetailScreen(
                             color = Slate500
                         )
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExecutingAction = true
-                                        actionError = null
-                                        try {
-                                            delivery = apiClient.getService().dispatchDelivery(deliveryId)
-                                        } catch (t: Throwable) {
-                                            actionError = ApiErrorParser.parse(t).message
-                                        } finally {
-                                            isExecutingAction = false
-                                        }
-                                    }
-                                },
-                                enabled = !isExecutingAction,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = ActionBlue),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .defaultMinSize(minHeight = 44.dp)
-                                    .testTag("dispatch_delivery_button")
-                            ) {
-                                Text("Dispatch")
-                            }
-
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        isExecutingAction = true
-                                        actionError = null
-                                        try {
-                                            delivery = apiClient.getService().confirmPickupDelivery(deliveryId)
-                                        } catch (t: Throwable) {
-                                            actionError = ApiErrorParser.parse(t).message
-                                        } finally {
-                                            isExecutingAction = false
-                                        }
-                                    }
-                                },
-                                enabled = !isExecutingAction,
-                                shape = RoundedCornerShape(6.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = StatusGreen),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .defaultMinSize(minHeight = 44.dp)
-                                    .testTag("confirm_pickup_button")
-                            ) {
-                                Text("Pickup")
-                            }
+                        val availableActions = DeliveryAction.values().filter {
+                            isDeliveryActionVisible(userRole, it) && isDeliveryActionAvailable(d, it)
                         }
-
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    isExecutingAction = true
-                                    actionError = null
-                                    try {
-                                        delivery = apiClient.getService().cancelDelivery(deliveryId)
-                                    } catch (t: Throwable) {
-                                        actionError = ApiErrorParser.parse(t).message
-                                    } finally {
-                                        isExecutingAction = false
-                                    }
-                                }
-                            },
-                            enabled = !isExecutingAction,
-                            shape = RoundedCornerShape(6.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusRed),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .defaultMinSize(minHeight = 44.dp)
-                                .testTag("cancel_delivery_button")
-                        ) {
-                            Text("Cancel Delivery")
+                        if (availableActions.isEmpty()) Text(
+                            if (isDeliveryLifecycleComplete(d)) "This delivery is complete." else "No action is available at this stage. Progress updates automatically.",
+                            style = MaterialTheme.typography.bodyMedium, color = Slate600
+                        )
+                        availableActions.forEach { action ->
+                            OutlinedButton(
+                                onClick = { pendingAction = action },
+                                enabled = !isExecutingAction && fetchError == null,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(when(action) {
+                                    DeliveryAction.DISPATCH -> "dispatch_delivery_button"
+                                    DeliveryAction.CONFIRM_PICKUP -> "confirm_pickup_button"
+                                    DeliveryAction.CONFIRM_LOADING -> "confirm_loading_button"
+                                    DeliveryAction.CANCEL -> "cancel_delivery_button"
+                                })
+                            ) { Text(when(action) {
+                                DeliveryAction.DISPATCH -> "Request dispatch"
+                                DeliveryAction.CONFIRM_PICKUP -> "Confirm package received"
+                                DeliveryAction.CONFIRM_LOADING -> "Confirm package loaded"
+                                DeliveryAction.CANCEL -> "Request cancellation"
+                            }) }
                         }
+                        if (isExecutingAction) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        fetchError?.let { Text("Updates unavailable: $it. Retrying automatically.", color = StatusRed, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+
                     }
                 }
 
@@ -397,12 +424,13 @@ fun DeliveryDetailScreen(
                                 fontFamily = FontFamily.Monospace,
                                 color = Slate500
                             )
-                            StatusBadge(status = d.status)
+                            StatusBadge(status = if (isDeliveryLifecycleComplete(d)) "COMPLETED" else d.status)
                         }
 
                         HorizontalDivider(thickness = 1.dp, color = BorderHairline)
 
                         KeyValRow(label = "Delivery ID", value = d.id, isMonospace = true)
+                        KeyValRow(label = "Pickup / Source", value = d.source_name ?: d.source_id ?: "Not recorded (legacy delivery)")
                         if (!d.robot_id.isNullOrBlank()) {
                             KeyValRow(label = "Robot ID", value = d.robot_id, isMonospace = true)
                         }
@@ -412,12 +440,60 @@ fun DeliveryDetailScreen(
                         if (!d.created_at.isNullOrBlank()) {
                             KeyValRow(label = "Created At", value = d.created_at, isMonospace = true)
                         }
-                        KeyValRow(
-                            label = "History Steps",
-                            value = "${d.history.size} entries",
-                            isMonospace = true,
-                            showDivider = false
-                        )
+                        d.physical_execution_confirmed?.let { confirmed ->
+                            KeyValRow(
+                                label = "Physical Execution Confirmed",
+                                value = confirmed.toString(),
+                                isMonospace = true
+                            )
+                        }
+                        d.cancellation_requested?.let { requested ->
+                            KeyValRow(
+                                label = "Cancellation Requested",
+                                value = requested.toString(),
+                                isMonospace = true
+                            )
+                        }
+                        if (d.history.isEmpty()) {
+                            KeyValRow(
+                                label = "History Steps",
+                                value = "No transitions",
+                                isMonospace = true,
+                                showDivider = false
+                            )
+                        } else {
+                            Text(
+                                text = "DELIVERY HISTORY",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = Slate500,
+                                modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp)
+                            )
+                            d.history.forEach { transition ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "${transition.from ?: "?"} → ${transition.to ?: "?"}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = Slate800
+                                    )
+                                    val details = listOfNotNull(
+                                        transition.timestamp,
+                                        transition.actor_id?.let { "Actor $it" },
+                                        transition.reason
+                                    )
+                                    if (details.isNotEmpty()) {
+                                        Text(details.joinToString(" · "), fontSize = 11.sp, color = Slate500)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

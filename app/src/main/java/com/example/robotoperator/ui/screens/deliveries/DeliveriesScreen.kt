@@ -12,6 +12,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import com.example.robotoperator.data.model.isDeliveryLifecycleComplete
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +33,8 @@ import com.example.robotoperator.data.api.ApiErrorParser
 import com.example.robotoperator.data.model.CreateDeliveryRequest
 import com.example.robotoperator.data.model.Delivery
 import com.example.robotoperator.data.model.Destination
+import com.example.robotoperator.data.model.isAdministratorRole
+import com.example.robotoperator.data.model.isValidDeliveryRoute
 import com.example.robotoperator.data.prefs.ServerSettingsStore
 import com.example.robotoperator.state.AuthManager
 import com.example.robotoperator.state.RobotStateHolder
@@ -46,11 +56,19 @@ fun DeliveriesScreen(
     var isCreating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    var showCreateDialog by remember { mutableStateOf(false) }
-    var selectedDestinationId by remember { mutableStateOf<String?>(null) }
+    var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedDestinationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedSourceId by rememberSaveable { mutableStateOf<String?>(null) }
 
+    var search by rememberSaveable { mutableStateOf("") }
+    var destinationSearch by rememberSaveable { mutableStateOf("") }
+    var createError by remember { mutableStateOf<String?>(null) }
+    val filteredDeliveries = deliveries.filter { search.isBlank() ||
+        it.id.contains(search, true) || it.destination_name.orEmpty().contains(search, true) || it.source_name.orEmpty().contains(search, true) ||
+        (if (isDeliveryLifecycleComplete(it)) "Completed" else it.status).contains(search, true) }
     val robotStatus by stateHolder.robotStatus.collectAsState()
     val currentUser by authManager.currentUser.collectAsState()
+    val isAdmin = isAdministratorRole(currentUser?.role)
     val scope = rememberCoroutineScope()
 
     fun loadData() {
@@ -60,16 +78,14 @@ fun DeliveriesScreen(
             try {
                 val service = apiClient.getService()
                 // Role-based list: ADMIN gets full deliveries list; USER gets only their own deliveries
-                deliveries = if (currentUser?.role == "ADMIN") {
+                deliveries = if (isAdmin) {
                     service.getDeliveries()
                 } else {
                     service.getMyDeliveries()
                 }
                 destinations = service.getDestinations()
-                if (destinations.isNotEmpty() && selectedDestinationId == null) {
-                    selectedDestinationId = destinations.first().id
-                }
-            } catch (t: Throwable) {
+            } catch (e: CancellationException) { throw e
+            } catch (t: Exception) {
                 errorMessage = ApiErrorParser.parse(t).message
             } finally {
                 isLoading = false
@@ -77,7 +93,7 @@ fun DeliveriesScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentUser?.role) {
         loadData()
     }
 
@@ -85,17 +101,11 @@ fun DeliveriesScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    if (destinations.isEmpty()) {
-                        scope.launch {
-                            try {
-                                destinations = apiClient.getService().getDestinations()
-                                if (destinations.isNotEmpty()) selectedDestinationId = destinations.first().id
-                            } catch (_: Exception) {}
-                            showCreateDialog = true
-                        }
-                    } else {
-                        showCreateDialog = true
-                    }
+                    selectedDestinationId = null
+                    selectedSourceId = null
+                    destinationSearch = ""
+                    createError = null
+                    showCreateDialog = true
                 },
                 containerColor = ActionBlue,
                 contentColor = PureWhite,
@@ -131,7 +141,7 @@ fun DeliveriesScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "DELIVERY DISPATCH",
+                    text = if (isAdmin) "Deliveries" else "My deliveries",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
@@ -139,7 +149,8 @@ fun DeliveriesScreen(
                 )
                 IconButton(
                     onClick = { loadData() },
-                    modifier = Modifier.size(32.dp)
+                    enabled = !isLoading,
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -168,6 +179,9 @@ fun DeliveriesScreen(
                 }
             }
 
+            OutlinedTextField(value = search, onValueChange = { search = it }, label = { Text("Search pickup, destination, status or ID") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("delivery_search"))
+            if (!isAdmin) Text("Use New delivery to choose pickup and destination. An operator dispatches the robot.", style = MaterialTheme.typography.bodyMedium, color = Slate600)
+            if (errorMessage != null) TextButton(onClick = { loadData() }) { Text("Retry") }
             when {
                 isLoading -> {
                     Box(
@@ -181,7 +195,7 @@ fun DeliveriesScreen(
                         )
                     }
                 }
-                deliveries.isEmpty() -> {
+                filteredDeliveries.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -189,7 +203,7 @@ fun DeliveriesScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No deliveries registered",
+                            text = if (errorMessage != null) "Deliveries could not be loaded. Tap Retry to try again." else if (search.isNotBlank()) "No matching deliveries. Try a different search." else if (isAdmin) "No deliveries yet. Create a delivery to choose its destination." else "No deliveries assigned to your account yet.",
                             fontSize = 14.sp,
                             color = Slate500
                         )
@@ -200,7 +214,7 @@ fun DeliveriesScreen(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(deliveries, key = { it.id }) { delivery ->
+                        items(filteredDeliveries, key = { it.id }) { delivery ->
                             Card(
                                 shape = RoundedCornerShape(6.dp),
                                 colors = CardDefaults.cardColors(containerColor = PureWhite),
@@ -221,12 +235,13 @@ fun DeliveriesScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = delivery.destination_name ?: "Dest: ${delivery.destination_id?.take(8) ?: "Unknown"}",
+                                            text = listOfNotNull(delivery.source_name, delivery.destination_name).joinToString(" → ").ifBlank { "Delivery ${delivery.id.take(8)}" },
+                                            modifier = Modifier.weight(1f),
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             color = Slate900
                                         )
-                                        StatusBadge(status = delivery.status)
+                                        StatusBadge(status = if (isDeliveryLifecycleComplete(delivery)) "COMPLETED" else delivery.status)
                                     }
 
                                     Spacer(modifier = Modifier.height(6.dp))
@@ -247,39 +262,24 @@ fun DeliveriesScreen(
 
         if (showCreateDialog) {
             AlertDialog(
-                onDismissRequest = { showCreateDialog = false },
-                title = { Text("Dispatch New Delivery") },
+                onDismissRequest = { if (!isCreating) showCreateDialog = false },
+                title = { Text("Create delivery") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Select Destination:", fontSize = 13.sp, color = Slate700)
+                        Text("Choose pickup and destination on the same mapped floor. This creates a request; dispatch is a separate action.", style = MaterialTheme.typography.bodyMedium)
+                        createError?.let { Text(it, color = StatusRed, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                         if (destinations.isEmpty()) {
-                            Text("No destinations found. Create a destination first.", fontSize = 12.sp, color = StatusRed)
+                            Text(errorMessage ?: "No destinations found. Create one in More > Destinations first.", fontSize = 12.sp, color = StatusRed)
+                            TextButton(enabled = !isLoading, onClick = { loadData() }) { Text("Reload destinations") }
                         } else {
-                            destinations.forEach { dest ->
-                                val isSelected = selectedDestinationId == dest.id
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) ActionBlue else BorderHairline,
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .background(if (isSelected) ActionBlueSubtle else PureWhite)
-                                        .clickable { selectedDestinationId = dest.id }
-                                        .padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = { selectedDestinationId = dest.id },
-                                        colors = RadioButtonDefaults.colors(selectedColor = ActionBlue)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(dest.name, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                }
-                            }
+                            DeliveryLocationSelection(
+                                locations = destinations,
+                                sourceId = selectedSourceId,
+                                destinationId = selectedDestinationId,
+                                enabled = !isCreating,
+                                onSourceSelected = { selectedSourceId = it; selectedDestinationId = null },
+                                onDestinationSelected = { selectedDestinationId = it }
+                            )
                         }
                     }
                 },
@@ -287,29 +287,33 @@ fun DeliveriesScreen(
                     Button(
                         onClick = {
                             val destId = selectedDestinationId ?: return@Button
-                            val robotId = robotStatus.id.ifBlank { settingsStore.cachedRobotId ?: "" }
-                            if (robotId.isBlank()) {
-                                errorMessage = "Cannot dispatch: No robot registered yet."
-                                showCreateDialog = false
+                            val source = destinations.firstOrNull { it.id == selectedSourceId }
+                            val destination = destinations.firstOrNull { it.id == destId }
+                            if (!isValidDeliveryRoute(source, destination)) {
+                                createError = "Choose distinct pickup and destination locations on the same robot map."
                                 return@Button
                             }
+                            val robotId = source!!.robot_id!!
 
-                            showCreateDialog = false
+                            if (isCreating) return@Button
+                            isCreating = true
+                            createError = null
                             scope.launch {
-                                isCreating = true
-                                errorMessage = null
                                 try {
                                     val newDel = apiClient.getService().createDelivery(
                                         CreateDeliveryRequest(
                                             destination_id = destId,
+                                            source_id = source.id,
                                             robot_id = robotId
                                         )
                                     )
+                                    showCreateDialog = false
                                     loadData()
                                     onSelectDelivery(newDel.id)
-                                } catch (t: Throwable) {
+                                } catch (e: CancellationException) { throw e
+                                } catch (t: Exception) {
                                     val parsed = ApiErrorParser.parse(t)
-                                    errorMessage = if (parsed.statusCode == 403) {
+                                    createError = if (parsed.statusCode == 403) {
                                         "You don't have access to this robot. Ask an admin to grant access."
                                     } else {
                                         parsed.message
@@ -319,15 +323,15 @@ fun DeliveriesScreen(
                                 }
                             }
                         },
-                        enabled = selectedDestinationId != null && !isCreating,
+                        enabled = isValidDeliveryRoute(destinations.firstOrNull { it.id == selectedSourceId }, destinations.firstOrNull { it.id == selectedDestinationId }) && !isCreating,
                         shape = RoundedCornerShape(6.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = ActionBlue)
                     ) {
-                        Text("Dispatch")
+                        Text(if (isCreating) "Creating…" else "Create delivery")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showCreateDialog = false }) {
+                    TextButton(enabled = !isCreating, onClick = { showCreateDialog = false }) {
                         Text("Cancel")
                     }
                 }

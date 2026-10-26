@@ -17,19 +17,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.robotoperator.data.model.RobotStatus
+import com.example.robotoperator.data.model.normalizedConnectionState
+import com.example.robotoperator.data.model.safetyTelemetryContext
+import com.example.robotoperator.data.model.safetyTelemetryLabel
 import com.example.ui.theme.*
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StatusStrip(
     robotStatus: RobotStatus,
     isLiveConnected: Boolean,
+    canAdministerRobot: Boolean,
     onEStopClick: () -> Unit,
     onModeClick: () -> Unit,
+    onOpenWifiClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val isOnline = robotStatus.status.equals("ONLINE", ignoreCase = true)
+    val connectionState = normalizedConnectionState(robotStatus.connection_state)
     val mode = robotStatus.control_mode.ifBlank { "MANUAL" }
-    val safety = robotStatus.safety_state.ifBlank { "SAFE" }
+    val safety = safetyTelemetryLabel(robotStatus.safety_state)
 
     Column(
         modifier = modifier
@@ -39,37 +45,45 @@ fun StatusStrip(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left Group: Online indicator + Live status + Control Mode + Safety
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f, fill = false)
+            // Status and Mode Pills
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.weight(1f).padding(end = 8.dp)
             ) {
                 // Online/Offline pill
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .background(
-                            if (isOnline) StatusGreen.copy(alpha = 0.2f) else StatusGrey.copy(alpha = 0.2f),
+                            when (connectionState) {
+                                "ONLINE" -> StatusGreen.copy(alpha = 0.2f)
+                                "STALE" -> StatusAmber.copy(alpha = 0.2f)
+                                else -> StatusGrey.copy(alpha = 0.2f)
+                            },
                             RoundedCornerShape(4.dp)
                         )
-                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .size(6.dp)
                             .clip(CircleShape)
-                            .background(if (isOnline) StatusGreen else StatusGrey)
+                            .background(when (connectionState) {
+                                "ONLINE" -> StatusGreen
+                                "STALE" -> StatusAmber
+                                else -> StatusGrey
+                            })
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (isOnline) "ONLINE" else "OFFLINE",
+                        text = connectionState,
                         color = PureWhite,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -79,17 +93,16 @@ fun StatusStrip(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .defaultMinSize(minHeight = 48.dp)
+                        .background(Slate800, RoundedCornerShape(4.dp))
                         .clip(RoundedCornerShape(4.dp))
-                        .clickable(onClick = onModeClick)
-                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                        .clickable(enabled = canAdministerRobot, role = androidx.compose.ui.semantics.Role.Button, onClick = onModeClick)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
                         .testTag("mode_selector_button")
                 ) {
                     Text(
                         text = "MODE:",
                         color = Slate400,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Normal,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.width(3.dp))
@@ -106,29 +119,31 @@ fun StatusStrip(
                     )
                 }
 
-                // Safety State
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 2.dp)
-                ) {
-                    Text(
-                        text = safety,
-                        color = when (safety.uppercase()) {
-                            "SAFE" -> StatusGreen
-                            "SLOW", "REPLAN" -> StatusAmber
-                            "EMERGENCY_STOP" -> StatusRed
-                            else -> Slate400
-                        },
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
+                // Wi-Fi Quick Access Pill
+                if (canAdministerRobot && onOpenWifiClick != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .background(Slate800, RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onOpenWifiClick)
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .testTag("open_robot_wifi_settings")
+                    ) {
+                        Text(
+                            text = "WI-FI",
+                            color = Slate300,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
-                // Live WS indicator
+                // Live Feed indicator
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = 2.dp)
+                    modifier = Modifier.padding(vertical = 4.dp)
                 ) {
                     Box(
                         modifier = Modifier
@@ -138,34 +153,44 @@ fun StatusStrip(
                     )
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
-                        text = if (isLiveConnected) "LIVE" else "DISCONNECTED",
+                        text = if (isLiveConnected) "LIVE" else "OFFLINE",
                         color = if (isLiveConnected) Slate400 else StatusAmber,
-                        fontSize = 9.sp,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
             }
 
-            // Right Group: Pinned E-STOP button (always reachable, fires immediately with no confirmation)
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .defaultMinSize(minWidth = 72.dp, minHeight = 48.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(StatusRed)
-                    .clickable(onClick = onEStopClick)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .testTag("e_stop_pinned_button")
-            ) {
-                Text(
-                    text = "E-STOP",
-                    color = PureWhite,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp
-                )
+            // Right Group: administrator-only E-STOP button
+            if (canAdministerRobot) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .defaultMinSize(minWidth = 84.dp, minHeight = 36.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(StatusRed)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onEStopClick)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .testTag("e_stop_pinned_button")
+                ) {
+                    Text(
+                        text = "REQ E-STOP",
+                        color = PureWhite,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
         }
+
+        Text(
+            text = "Last seen: ${robotStatus.last_seen ?: "unknown"}. ${safetyTelemetryContext(connectionState, isLiveConnected)}",
+            color = Slate400,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp)
+        )
     }
 }
